@@ -1,2 +1,8 @@
 # Youtube_to_mp3
-An executable program that allows you to extract only audio from youtube videos and convert to mp3 format.
+-------------------------------------------------------------------
+Library needed as follows:
+youtube-dl
+ffmpeg
+ffprobe 
+-------------------------------------------------------------------
+This program will allow you to extract audio from youtube videos and convert it to a mp3 files.
