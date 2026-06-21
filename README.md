@@ -8,13 +8,22 @@ keep a concurrent download queue running while you add more.
 
 ## Features
 
-- 🎵 **Audio (MP3)** with selectable bitrate (128–320 kbps)
+- 🔎 **Search & download** — find a song by name right in the app; no link needed. Pasting a URL still works as a fallback.
+- 🔗 **Streaming links** — paste a **Spotify / Apple Music / Deezer** track, album or playlist link and Songtify resolves each track and grabs it from YouTube (no API keys required).
+- 🎵 **Audio** in **MP3 / M4A / Opus / FLAC / WAV** with selectable bitrate (128–320 kbps for lossy)
 - 🎬 **Video (MP4)** with a resolution picker (Best / 1080p / 720p / 480p)
-- ⚡ **Concurrent queue** — download several items at once (configurable), keep adding while they run
+- ⚡ **Concurrent queue** — download several items at once (configurable), **pause/resume** the whole queue, keep adding while they run
+- 💾 **Persistent queue** — unfinished items return after you restart the app
+- 🗂️ **Filename templates** — organise output with tokens and sub-folders, e.g. `{artist}/{album}/{track}`
+- 🚫 **Duplicate detection** — skip tracks you've already downloaded (yt-dlp download archive)
+- 🐢 **Bandwidth limit** — cap download speed for metered connections
+- 📋 **Clipboard auto-detect** & **drag-and-drop** — drop a link on the window or copy one to queue it fast
 - 📃 **Playlists** are expanded automatically into individual queue items
 - ✏️ **Editable filename per item** — defaults to *Artist - Track*, falls back to the video title
 - 🏷️ **Full metadata + cover art** embedded (title, artist, album, year, genre, square thumbnail)
+- 🎚️ **In-app tag editor** with **MusicBrainz** auto-fill for clean, canonical tags
 - 🎤 **Lyrics** via `syncedlyrics` — synced `.lrc` sidecar when available, plus embedded plain text
+- 🔄 **One-click yt-dlp update** so downloads keep working as sites change
 - 🌙 Clean, dynamic dark UI with sidebar navigation
 - 🔁 Per-item **cancel** and **retry**, with partial-file cleanup
 
@@ -24,21 +33,40 @@ keep a concurrent download queue running while you add more.
 main.py                 # entry point
 app/
   core/
-    downloader.py        # yt-dlp worker (QRunnable)
-    queue_manager.py     # QThreadPool queue + playlist expansion
-    metadata.py          # mutagen tags + cover art
+    downloader.py        # yt-dlp worker (QRunnable): codecs, rate limit, archive
+    queue_manager.py     # QThreadPool queue: resolve, pause/resume, persistence
+    resolvers.py         # Spotify / Apple Music / Deezer link -> YouTube searches
+    search.py            # ytsearch worker (search & download)
+    enrich.py            # MusicBrainz tag lookup
+    updater.py           # one-click yt-dlp update worker
+    metadata.py          # mutagen tags + cover art (mp3/m4a/flac/opus) + tag I/O
     lyrics.py            # syncedlyrics fetch -> .lrc / embedded
-    naming.py            # name resolution + sanitization
-    settings.py          # QSettings persistence
+    naming.py            # name resolution, sanitization, filename templates
+    settings.py          # QSettings persistence + app-data paths
+    library.py           # list/rename downloaded files
     paths.py             # resource/ffmpeg/icon path resolution
   ui/
-    main_window.py       # sidebar nav + Download/Queue/Settings pages
+    main_window.py       # sidebar nav + Download/Queue/Library/Settings pages
+    search_widget.py     # search results list
     queue_widget.py      # queue rows (progress, rename, cancel/retry)
+    library_widget.py    # library rows (rename, edit tags)
+    metadata_dialog.py   # tag editor + MusicBrainz auto-fill
     theme.py             # dark QSS + icon helpers
 assets/youtube_music.ico
 ffmpeg.exe               # bundled FFmpeg (required for audio/merge)
 music.spec               # PyInstaller build spec
 ```
+
+## Filename templates
+
+The **Settings → Filename template** field controls how files are named and
+foldered. The default is `{name}` (the editable *Artist - Track* name). Use `/`
+to create sub-folders. Available tokens:
+
+`{name}` `{title}` `{track}` `{artist}` `{album}` `{year}` `{playlist}` `{index}`
+
+Example: `{artist}/{album}/{index} - {track}` →
+`Daft Punk/Discovery/01 - One More Time.mp3`
 
 ## Run from source
 
