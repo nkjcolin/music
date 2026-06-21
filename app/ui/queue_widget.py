@@ -114,14 +114,18 @@ class QueueRow(QFrame):
         self.status_label.setText(status)
         self._set_status_style(status)
 
-        active = status in ("Downloading", "Processing", "Fetching lyrics", "Tagging", "Pending")
-        self.name_edit.setReadOnly(status != "Pending")
+        active = status in (
+            "Downloading", "Processing", "Fetching lyrics", "Tagging", "Pending", "Queued", "Checking"
+        )
+        self.name_edit.setReadOnly(status not in ("Pending", "Queued"))
         self.cancel_btn.setVisible(active)
-        self.retry_btn.setVisible(status in ("Error", "Cancelled"))
+        self.retry_btn.setVisible(status in ("Error", "Cancelled", "Skipped"))
         if status == "Done":
             self.progress.setValue(100)
             self.detail.setText("")
             self.open_btn.setVisible(True)
+        elif status == "Skipped":
+            self.detail.setText("Already downloaded")
         elif status in ("Error", "Cancelled"):
             self.detail.setText(status)
 

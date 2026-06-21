@@ -1,0 +1,348 @@
+"""In-app audio player: song list, now-playing card, time-synced lyrics."""
+
+from __future__ import annotations
+
+import os
+
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QPixmap
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QSlider,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ..core import library as library_mod
+from ..core import lrc as lrc_mod
+from ..core import metadata as metadata_mod
+from . import theme
+
+_AUDIO_EXTS = (".mp3", ".m4a", ".flac", ".wav", ".opus", ".ogg")
+
+
+def _fmt_ms(ms: int) -> str:
+    s = max(0, int(ms)) // 1000
+    return f"{s // 60}:{s % 60:02d}"
+
+
+class PlayerWidget(QWidget):
+    """Plays local audio, lists the folder's songs, and scrolls ``.lrc`` lyrics."""
+
+    def __init__(self, settings) -> None:
+        super().__init__()
+        self.settings = settings
+        self.player = QMediaPlayer(self)
+        self.audio = QAudioOutput(self)
+        self.player.setAudioOutput(self.audio)
+        self.audio.setVolume(0.85)
+
+        self._lyrics: list[tuple[int, str]] = []
+        self._active = -1
+        self._seeking = False
+        self._song_paths: list[str] = []
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(14)
+
+        main = QHBoxLayout()
+        main.setSpacing(16)
+        main.addWidget(self._build_song_panel(), 1)
+        main.addWidget(self._build_now_panel(), 2)
+        root.addLayout(main, 1)
+        root.addWidget(self._build_transport())
+
+        self.player.positionChanged.connect(self._on_position)
+        self.player.durationChanged.connect(self._on_duration)
+        self.player.playbackStateChanged.connect(self._on_state)
+        self.player.errorOccurred.connect(self._on_error)
+
+    # -- panels ------------------------------------------------------------
+    def _build_song_panel(self) -> QWidget:
+        panel = QWidget()
+        lay = QVBoxLayout(panel)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(8)
+        header = QLabel("Songs in your folder")
+        header.setObjectName("sectionLabel")
+        lay.addWidget(header)
+        self.song_list = QListWidget()
+        self.song_list.setObjectName("songList")
+        self.song_list.itemClicked.connect(self._on_song_clicked)
+        lay.addWidget(self.song_list, 1)
+        return panel
+
+    def _build_now_panel(self) -> QWidget:
+        self.now_panel = QWidget()
+        lay = QVBoxLayout(self.now_panel)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(12)
+
+        card = QHBoxLayout()
+        card.setSpacing(16)
+        self.cover = QLabel()
+        self.cover.setFixedSize(96, 96)
+        self.cover.setObjectName("cover")
+        self.cover.setAlignment(Qt.AlignCenter)
+        self._set_placeholder_cover()
+        card.addWidget(self.cover)
+
+        meta = QVBoxLayout()
+        meta.setSpacing(4)
+        meta.addStretch(1)
+        self.title_label = QLabel("Nothing playing")
+        self.title_label.setStyleSheet("font-size: 18px; font-weight: 700;")
+        self.title_label.setWordWrap(True)
+        self.artist_label = QLabel("")
+        self.artist_label.setStyleSheet(f"color: {theme.TEXT_DIM};")
+        meta.addWidget(self.title_label)
+        meta.addWidget(self.artist_label)
+        meta.addStretch(1)
+        card.addLayout(meta, 1)
+
+        open_btn = QPushButton("  Open file")
+        open_btn.setIcon(theme.icon("fa5s.folder-open", theme.TEXT))
+        open_btn.clicked.connect(self._open_file)
+        card.addWidget(open_btn, 0, Qt.AlignTop)
+        lay.addLayout(card)
+
+        # Lyrics header with a collapse toggle.
+        lyr_header = QHBoxLayout()
+        lyr_label = QLabel("Lyrics")
+        lyr_label.setObjectName("sectionLabel")
+        lyr_header.addWidget(lyr_label)
+        lyr_header.addStretch(1)
+        self.lyrics_toggle = QPushButton("  Collapse")
+        self.lyrics_toggle.setIcon(theme.icon("fa5s.chevron-up", theme.TEXT))
+        self.lyrics_toggle.clicked.connect(self._toggle_lyrics)
+        lyr_header.addWidget(self.lyrics_toggle)
+        lay.addLayout(lyr_header)
+
+        self.lyrics_list = QListWidget()
+        self.lyrics_list.setObjectName("lyrics")
+        self.lyrics_list.setSelectionMode(QAbstractItemView.NoSelection)
+        self.lyrics_list.setFocusPolicy(Qt.NoFocus)
+        self.lyrics_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.lyrics_list.itemClicked.connect(self._seek_to_line)
+        self._reset_lyrics("Pick a song to see lyrics here.")
+        lay.addWidget(self.lyrics_list, 1)
+        return self.now_panel
+
+    def _build_transport(self) -> QWidget:
+        bar = QWidget()
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(12)
+
+        self.play_btn = QPushButton()
+        self.play_btn.setIcon(theme.icon("fa5s.play", "white"))
+        self.play_btn.setObjectName("primary")
+        self.play_btn.setFixedSize(44, 44)
+        self.play_btn.clicked.connect(self._toggle_play)
+        lay.addWidget(self.play_btn)
+
+        self.elapsed = QLabel("0:00")
+        self.elapsed.setStyleSheet(f"color: {theme.TEXT_DIM};")
+        lay.addWidget(self.elapsed)
+
+        self.seek = QSlider(Qt.Horizontal)
+        self.seek.setRange(0, 0)
+        self.seek.sliderPressed.connect(lambda: setattr(self, "_seeking", True))
+        self.seek.sliderReleased.connect(self._seek_released)
+        lay.addWidget(self.seek, 1)
+
+        self.total = QLabel("0:00")
+        self.total.setStyleSheet(f"color: {theme.TEXT_DIM};")
+        lay.addWidget(self.total)
+
+        vol_icon = QLabel()
+        vol_icon.setPixmap(theme.icon("fa5s.volume-up", theme.TEXT_DIM).pixmap(16, 16))
+        lay.addWidget(vol_icon)
+        self.volume = QSlider(Qt.Horizontal)
+        self.volume.setRange(0, 100)
+        self.volume.setValue(85)
+        self.volume.setFixedWidth(100)
+        self.volume.valueChanged.connect(lambda v: self.audio.setVolume(v / 100.0))
+        lay.addWidget(self.volume)
+
+        self.minimise_btn = QPushButton()
+        self.minimise_btn.setIcon(theme.icon("fa5s.compress", theme.TEXT))
+        self.minimise_btn.setToolTip("Minimise now playing to browse other songs")
+        self.minimise_btn.setFixedSize(38, 38)
+        self.minimise_btn.clicked.connect(self._toggle_minimise)
+        lay.addWidget(self.minimise_btn)
+        return bar
+
+    # -- public ------------------------------------------------------------
+    def refresh_songs(self) -> None:
+        """Rescan the music folder and rebuild the song list."""
+        current = self.player.source().toLocalFile() if self.player.source().isValid() else ""
+        self.song_list.clear()
+        self._song_paths = []
+        for info in library_mod.list_media(self.settings.folder):
+            if info["ext"].lower() not in _AUDIO_EXTS:
+                continue
+            self._song_paths.append(info["path"])
+            item = QListWidgetItem(info["stem"])
+            self.song_list.addItem(item)
+            if os.path.normcase(info["path"]) == os.path.normcase(current):
+                self.song_list.setCurrentItem(item)
+        if not self._song_paths:
+            self.song_list.addItem(QListWidgetItem("No songs in your music folder yet."))
+
+    def play_file(self, path: str) -> None:
+        """Load ``path``, show its tags/cover/lyrics, and start playback."""
+        if not path or not os.path.exists(path):
+            return
+        if self.now_panel.isHidden():           # un-minimise when a song starts
+            self._toggle_minimise()
+        tags = metadata_mod.read_tags(path)
+        stem = os.path.splitext(os.path.basename(path))[0]
+        self.title_label.setText(tags.get("title") or stem)
+        self.artist_label.setText(tags.get("artist") or "")
+        self._load_cover(path)
+
+        self._lyrics = lrc_mod.load_synced(path)
+        self._active = -1
+        if self._lyrics:
+            self.lyrics_list.clear()
+            for _, text in self._lyrics:
+                item = QListWidgetItem(text or "♪")
+                item.setTextAlignment(Qt.AlignCenter)
+                self.lyrics_list.addItem(item)
+        else:
+            self._reset_lyrics("No synced lyrics (.lrc) found for this track.")
+
+        self._select_song_in_list(path)
+        self.player.setSource(QUrl.fromLocalFile(path))
+        self.player.play()
+
+    def stop(self) -> None:
+        self.player.stop()
+
+    # -- song list ---------------------------------------------------------
+    def _on_song_clicked(self, item: QListWidgetItem) -> None:
+        row = self.song_list.row(item)
+        if 0 <= row < len(self._song_paths):
+            self.play_file(self._song_paths[row])
+
+    def _select_song_in_list(self, path: str) -> None:
+        for row, p in enumerate(self._song_paths):
+            if os.path.normcase(p) == os.path.normcase(path):
+                self.song_list.setCurrentRow(row)
+                return
+
+    # -- collapse / minimise ----------------------------------------------
+    def _toggle_lyrics(self) -> None:
+        show = self.lyrics_list.isHidden()
+        self.lyrics_list.setVisible(show)
+        self.lyrics_toggle.setText("  Collapse" if show else "  Expand")
+        self.lyrics_toggle.setIcon(
+            theme.icon("fa5s.chevron-up" if show else "fa5s.chevron-down", theme.TEXT))
+
+    def _toggle_minimise(self) -> None:
+        minimised = not self.now_panel.isHidden()
+        self.now_panel.setVisible(not minimised)
+        self.minimise_btn.setIcon(
+            theme.icon("fa5s.expand" if minimised else "fa5s.compress", theme.TEXT))
+        self.minimise_btn.setToolTip(
+            "Show now playing" if minimised else "Minimise now playing to browse other songs")
+
+    # -- lyrics helpers ----------------------------------------------------
+    def _reset_lyrics(self, message: str) -> None:
+        self.lyrics_list.clear()
+        item = QListWidgetItem(message)
+        item.setTextAlignment(Qt.AlignCenter)
+        item.setForeground(Qt.gray)
+        self.lyrics_list.addItem(item)
+
+    def _seek_to_line(self, item: QListWidgetItem) -> None:
+        if not self._lyrics:
+            return
+        row = self.lyrics_list.row(item)
+        if 0 <= row < len(self._lyrics):
+            self.player.setPosition(self._lyrics[row][0])
+
+    def _highlight(self, index: int) -> None:
+        if index == self._active or not self._lyrics:
+            return
+        prev = self.lyrics_list.item(self._active) if self._active >= 0 else None
+        if prev:
+            prev.setForeground(Qt.gray)
+            font = prev.font(); font.setBold(False); prev.setFont(font)
+        cur = self.lyrics_list.item(index) if index >= 0 else None
+        if cur:
+            cur.setForeground(Qt.white)
+            font = cur.font(); font.setBold(True); cur.setFont(font)
+            self.lyrics_list.scrollToItem(cur, QAbstractItemView.PositionAtCenter)
+        self._active = index
+
+    # -- cover helpers -----------------------------------------------------
+    def _set_placeholder_cover(self) -> None:
+        self.cover.setPixmap(theme.icon("fa5s.compact-disc", theme.TEXT_DIM).pixmap(72, 72))
+
+    def _load_cover(self, path: str) -> None:
+        data = metadata_mod.read_cover(path)
+        if not data:
+            self._set_placeholder_cover()
+            return
+        pix = QPixmap()
+        if pix.loadFromData(data):
+            self.cover.setPixmap(pix.scaled(
+                96, 96, Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation))
+        else:
+            self._set_placeholder_cover()
+
+    # -- transport ---------------------------------------------------------
+    def _toggle_play(self) -> None:
+        if self.player.playbackState() == QMediaPlayer.PlayingState:
+            self.player.pause()
+        elif self.player.source().isValid():
+            self.player.play()
+
+    def _open_file(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open audio", self.settings.folder,
+            "Audio (*.mp3 *.m4a *.flac *.wav *.opus *.ogg);;All files (*.*)",
+        )
+        if path:
+            self.play_file(path)
+
+    def _seek_released(self) -> None:
+        self.player.setPosition(self.seek.value())
+        self._seeking = False
+
+    def _on_position(self, ms: int) -> None:
+        if not self._seeking:
+            self.seek.setValue(ms)
+        self.elapsed.setText(_fmt_ms(ms))
+        if self._lyrics:
+            idx = -1
+            for i, (t, _) in enumerate(self._lyrics):
+                if t <= ms:
+                    idx = i
+                else:
+                    break
+            self._highlight(idx)
+
+    def _on_duration(self, ms: int) -> None:
+        self.seek.setRange(0, ms)
+        self.total.setText(_fmt_ms(ms))
+
+    def _on_state(self, state) -> None:
+        playing = state == QMediaPlayer.PlayingState
+        self.play_btn.setIcon(theme.icon("fa5s.pause" if playing else "fa5s.play", "white"))
+
+    def _on_error(self, error, message: str = "") -> None:
+        if error != QMediaPlayer.NoError:
+            self._reset_lyrics(
+                f"Cannot play this file: {message or 'unsupported format/codec'}."
+            )

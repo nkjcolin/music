@@ -6,7 +6,7 @@ import os
 import subprocess
 import sys
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from ..core import library as library_mod
 from . import theme
+from .metadata_dialog import MetadataDialog
 
 
 def _human_size(num: int) -> str:
@@ -32,8 +33,13 @@ def _human_size(num: int) -> str:
     return f"{size:.1f} GB"
 
 
+_AUDIO_EXTS = (".mp3", ".m4a", ".flac", ".wav", ".opus", ".ogg")
+
+
 class LibraryRow(QFrame):
     """A single downloaded file with an editable name and rename/open controls."""
+
+    play_requested = Signal(str)   # file path
 
     def __init__(self, info: dict, on_renamed) -> None:
         super().__init__()
@@ -45,12 +51,20 @@ class LibraryRow(QFrame):
         lay.setContentsMargins(14, 10, 14, 10)
         lay.setSpacing(10)
 
-        is_audio = info["ext"].lower() in (".mp3", ".m4a")
+        is_audio = info["ext"].lower() in _AUDIO_EXTS
         badge = QLabel()
         badge.setPixmap(theme.icon(
             "fa5s.music" if is_audio else "fa5s.film", theme.ACCENT
         ).pixmap(18, 18))
         lay.addWidget(badge)
+
+        if is_audio:
+            play_btn = QPushButton()
+            play_btn.setIcon(theme.icon("fa5s.play", theme.ACCENT))
+            play_btn.setToolTip("Play in app")
+            play_btn.setFixedSize(34, 34)
+            play_btn.clicked.connect(lambda: self.play_requested.emit(self.info["path"]))
+            lay.addWidget(play_btn)
 
         self.name_edit = QLineEdit(info["stem"])
         self.name_edit.returnPressed.connect(self._rename)
@@ -71,6 +85,12 @@ class LibraryRow(QFrame):
         save_btn.setIcon(theme.icon("fa5s.pen", theme.TEXT))
         save_btn.clicked.connect(self._rename)
         lay.addWidget(save_btn)
+
+        tags_btn = QPushButton("  Tags")
+        tags_btn.setIcon(theme.icon("fa5s.tag", theme.TEXT))
+        tags_btn.setToolTip("Edit metadata (with optional MusicBrainz lookup)")
+        tags_btn.clicked.connect(self._edit_tags)
+        lay.addWidget(tags_btn)
 
         open_btn = QPushButton()
         open_btn.setIcon(theme.icon("fa5s.folder-open", theme.TEXT_DIM))
@@ -103,6 +123,10 @@ class LibraryRow(QFrame):
         if self._on_renamed:
             self._on_renamed(self.info["stem"])
 
+    def _edit_tags(self) -> None:
+        dialog = MetadataDialog(self.info["path"], parent=self)
+        dialog.exec()
+
     def _open_location(self) -> None:
         path = self.info["path"]
         if not os.path.exists(path):
@@ -117,6 +141,8 @@ class LibraryRow(QFrame):
 
 class LibraryWidget(QWidget):
     """Lists media files in the download folder and lets the user rename them."""
+
+    play_requested = Signal(str)   # file path
 
     def __init__(self, settings) -> None:
         super().__init__()
@@ -167,4 +193,5 @@ class LibraryWidget(QWidget):
         self.empty.setVisible(not files)
         for info in files:
             row = LibraryRow(info, on_renamed=lambda *_: None)
+            row.play_requested.connect(self.play_requested)
             self._vbox.insertWidget(self._vbox.count() - 1, row)

@@ -19,11 +19,14 @@ BAD = "#ff5c69"
 
 STATUS_COLORS = {
     "Pending": TEXT_DIM,
+    "Queued": TEXT_DIM,
+    "Checking": WARN,
     "Downloading": ACCENT,
     "Processing": WARN,
     "Fetching lyrics": WARN,
     "Tagging": WARN,
     "Done": GOOD,
+    "Skipped": WARN,
     "Error": BAD,
     "Cancelled": TEXT_DIM,
 }
@@ -121,6 +124,12 @@ QFrame#queueRow {{
     border-radius: 10px;
 }}
 QFrame#queueRow:hover {{ background: {CARD_HOVER}; }}
+QFrame#clickableRow {{
+    background: {CARD};
+    border: 1px solid {BORDER};
+    border-radius: 10px;
+}}
+QFrame#clickableRow:hover {{ background: {CARD_HOVER}; border: 1px solid {ACCENT}; }}
 
 /* Progress */
 QProgressBar {{
@@ -150,6 +159,39 @@ QScrollBar::handle:vertical {{ background: {BORDER}; border-radius: 5px; min-hei
 QScrollBar::handle:vertical:hover {{ background: {TEXT_DIM}; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
 QScrollArea {{ border: none; }}
+
+/* Player */
+QLabel#cover {{
+    background: {CARD};
+    border: 1px solid {BORDER};
+    border-radius: 10px;
+}}
+QListWidget#lyrics {{
+    background: transparent;
+    border: none;
+    font-size: 15px;
+    outline: none;
+}}
+QListWidget#lyrics::item {{ padding: 6px 4px; }}
+QListWidget#songList {{
+    background: {CARD};
+    border: 1px solid {BORDER};
+    border-radius: 10px;
+    padding: 4px;
+    outline: none;
+}}
+QListWidget#songList::item {{ padding: 8px; border-radius: 6px; }}
+QListWidget#songList::item:hover {{ background: {CARD_HOVER}; }}
+QListWidget#songList::item:selected {{ background: {ACCENT}; color: white; }}
+
+QSlider::groove:horizontal {{
+    height: 6px; background: {BG_ALT}; border-radius: 3px;
+}}
+QSlider::sub-page:horizontal {{ background: {ACCENT}; border-radius: 3px; }}
+QSlider::handle:horizontal {{
+    background: {TEXT}; width: 14px; margin: -5px 0; border-radius: 7px;
+}}
+QSlider::handle:horizontal:hover {{ background: {ACCENT_HOVER}; }}
 
 QCheckBox {{ spacing: 8px; }}
 QCheckBox::indicator {{
