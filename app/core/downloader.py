@@ -72,7 +72,7 @@ class DownloadItem:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "DownloadItem":
+    def from_dict(cls, data: dict) -> DownloadItem:
         opts_data = dict(data.get("options") or {})
         # Drop unknown keys so older/newer saved queues still load.
         valid = {f.name for f in fields(DownloadOptions)}

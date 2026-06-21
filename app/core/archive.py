@@ -39,7 +39,7 @@ class Archive:
 
     def _load(self) -> dict:
         try:
-            with open(self.path, "r", encoding="utf-8") as fh:
+            with open(self.path, encoding="utf-8") as fh:
                 data = json.load(fh)
             return data if isinstance(data, dict) else {}
         except (OSError, ValueError):

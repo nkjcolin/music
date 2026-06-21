@@ -280,7 +280,7 @@ class QueueManager(QObject):
         if not os.path.exists(path):
             return 0
         try:
-            with open(path, "r", encoding="utf-8") as fh:
+            with open(path, encoding="utf-8") as fh:
                 data = json.load(fh)
         except Exception:
             return 0

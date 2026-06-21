@@ -1,0 +1,19 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+# Pyflakes (F), pycodestyle errors (E), warnings (W), import sorting (I),
+# bugbear (B), and pyupgrade (UP) — a pragmatic, low-noise set.
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",   # line length is handled by the formatter, not enforced hard
+    "B008",   # function calls in argument defaults (Qt patterns)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E402"]

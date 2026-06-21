@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import QThreadPool
 from PySide6.QtGui import QAction, QGuiApplication, QIcon
 from PySide6.QtWidgets import (
     QApplication,

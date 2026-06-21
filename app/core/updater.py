@@ -5,9 +5,8 @@ from __future__ import annotations
 import subprocess
 import sys
 
-from PySide6.QtCore import QObject, QRunnable, Signal
-
 import yt_dlp
+from PySide6.QtCore import QObject, QRunnable, Signal
 
 
 def current_version() -> str:

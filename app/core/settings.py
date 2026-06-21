@@ -89,6 +89,11 @@ def history_path() -> str:
     return os.path.join(_app_data_dir(), "history.json")
 
 
+def log_path() -> str:
+    """Path to the rotating diagnostics log file."""
+    return os.path.join(_app_data_dir(), "songtify.log")
+
+
 class AppSettings:
     """Thin typed wrapper around ``QSettings`` for the values this app cares about."""
 

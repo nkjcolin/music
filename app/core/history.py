@@ -13,7 +13,7 @@ _MAX = 500
 
 def _load_raw(path: str) -> list:
     try:
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
         return data if isinstance(data, list) else []
     except (OSError, ValueError):

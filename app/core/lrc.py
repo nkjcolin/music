@@ -64,7 +64,7 @@ def load_synced(media_path: str) -> list[tuple[int, str]]:
         return []
     for encoding in ("utf-8", "utf-8-sig", "latin-1"):
         try:
-            with open(path, "r", encoding=encoding) as fh:
+            with open(path, encoding=encoding) as fh:
                 return parse_lrc(fh.read())
         except (UnicodeDecodeError, OSError):
             continue

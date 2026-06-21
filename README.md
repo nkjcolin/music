@@ -22,10 +22,16 @@ keep a concurrent download queue running while you add more.
 - ✏️ **Editable filename per item** — defaults to *Artist - Track*, falls back to the video title
 - 🏷️ **Full metadata + cover art** embedded (title, artist, album, year, genre, square thumbnail)
 - 🎚️ **In-app tag editor** with **MusicBrainz** auto-fill for clean, canonical tags
-- 🎤 **Lyrics** via `syncedlyrics` — synced `.lrc` sidecar when available, plus embedded plain text
-- 🔄 **One-click yt-dlp update** so downloads keep working as sites change
+- 🎤 **Lyrics** via `syncedlyrics` — synced `.lrc` (kept in a tidy `Lyrics/` sub-folder) plus on-demand fetch from the player
+- 🎧 **Built-in player** — play your downloads with **time-synced lyrics** (karaoke highlight), a real queue (**auto-advance, next/prev, shuffle, repeat**), and a **persistent mini-player** across all pages
+- 📚 **Library** — browse downloads with **search, sort, cover thumbnails, tag editing, rename, delete** and multi-select
+- 🕘 **History** — every completed download, with open-location and one-click **re-download**
+- 🎛️ **Advanced download** — quality **presets**, **SponsorBlock** segment removal, **cookies-from-browser** (age-restricted/private), embed **subtitles/chapters** for video
+- 🔔 **Desktop notifications** + system tray when downloads finish
+- 🚫 **Folder-aware duplicate detection** — skips a track only if its file is still on disk (re-downloads if you deleted it)
+- 🐢 **Bandwidth limit** · 🗂️ **separate music & video folders** · 🔄 **one-click yt-dlp update**
 - 🌙 Clean, dynamic dark UI with sidebar navigation
-- 🔁 Per-item **cancel** and **retry**, with partial-file cleanup
+- 🔁 Per-item **cancel / retry / reorder / remove**, with partial-file cleanup
 
 ## Project layout
 
@@ -45,16 +51,24 @@ app/
     settings.py          # QSettings persistence + app-data paths
     library.py           # list/rename downloaded files
     paths.py             # resource/ffmpeg/icon path resolution
+    archive.py           # folder-aware duplicate index
+    history.py           # persistent download history
+    lrc.py               # .lrc parsing + Lyrics/ sub-folder paths
+    logsetup.py          # rotating file log + uncaught-exception hook
   ui/
-    main_window.py       # sidebar nav + Download/Queue/Library/Settings pages
-    search_widget.py     # search results list
-    queue_widget.py      # queue rows (progress, rename, cancel/retry)
-    library_widget.py    # library rows (rename, edit tags)
+    main_window.py       # sidebar nav: Download/Queue/Library/Player/History/Settings
+    search_widget.py     # search results list (click to queue)
+    queue_widget.py      # queue rows (progress, rename, reorder, remove, retry)
+    library_widget.py    # library rows (play, rename, tags, delete; search/sort)
+    player_widget.py     # audio player with synced lyrics + playback queue
+    history_widget.py    # download history rows (re-download / open)
     metadata_dialog.py   # tag editor + MusicBrainz auto-fill
     theme.py             # dark QSS + icon helpers
 assets/youtube_music.ico
 ffmpeg.exe               # bundled FFmpeg (required for audio/merge)
-music.spec               # PyInstaller build spec
+music.spec               # PyInstaller build spec (one-file)
+music_onedir.spec        # PyInstaller build spec (one-folder, fast startup)
+tests/                   # pytest suite for the core logic
 ```
 
 ## Filename templates
@@ -80,15 +94,31 @@ python main.py
 > `ffmpeg.exe` ships in the repo root and is used automatically. If you remove it,
 > install FFmpeg and make sure it is on your `PATH`.
 
+## Development
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements-dev.txt   # app deps + pytest + ruff
+pytest                                 # run the test suite
+ruff check .                           # lint
+```
+
+CI (GitHub Actions) runs ruff + pytest on every push and pull request.
+
 ## Build a Windows .exe
 
 ```bash
 pip install pyinstaller
-pyinstaller music.spec
+pyinstaller music.spec          # one file  -> dist/Songtify.exe
+# or, for instant startup:
+pyinstaller music_onedir.spec   # one folder -> dist/Songtify/ (ship the folder)
 ```
 
-The single-file executable is written to `dist/Songtify.exe`. `ffmpeg.exe` and the
-icon are bundled inside it.
+The **one-file** build is a single `dist/Songtify.exe` with `ffmpeg.exe` and the
+icon bundled inside — convenient, but it extracts ffmpeg to a temp dir on each
+launch, so startup is a little slow. The **one-folder** build starts instantly;
+distribute the whole `dist/Songtify/` folder.
 
 ## Updating yt-dlp
 

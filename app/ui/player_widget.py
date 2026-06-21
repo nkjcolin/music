@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import random
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, Qt, QUrl, Signal
+from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QUrl, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
@@ -423,11 +423,15 @@ class PlayerWidget(QWidget):
         prev = self.lyrics_list.item(self._active) if self._active >= 0 else None
         if prev:
             prev.setForeground(Qt.gray)
-            font = prev.font(); font.setBold(False); prev.setFont(font)
+            font = prev.font()
+            font.setBold(False)
+            prev.setFont(font)
         cur = self.lyrics_list.item(index) if index >= 0 else None
         if cur:
             cur.setForeground(Qt.white)
-            font = cur.font(); font.setBold(True); cur.setFont(font)
+            font = cur.font()
+            font.setBold(True)
+            cur.setFont(font)
             self.lyrics_list.scrollToItem(cur, QAbstractItemView.PositionAtCenter)
         self._active = index
 
