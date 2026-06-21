@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import random
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, Qt, QUrl, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from ..core import library as library_mod
 from ..core import lrc as lrc_mod
+from ..core import lyrics as lyrics_mod
 from ..core import metadata as metadata_mod
 from . import theme
 
@@ -37,12 +38,40 @@ def _fmt_ms(ms: int) -> str:
     return f"{s // 60}:{s % 60:02d}"
 
 
+class _LyricsSignals(QObject):
+    done = Signal(str, object, object)   # path, synced_lrc, plain_text
+    error = Signal(str, str)             # path, message
+
+
+class _LyricsFetchWorker(QRunnable):
+    """Searches for lyrics off the UI thread via :mod:`app.core.lyrics`."""
+
+    def __init__(self, artist: str, title: str, path: str) -> None:
+        super().__init__()
+        self.artist = artist
+        self.title = title
+        self.path = path
+        self.signals = _LyricsSignals()
+
+    def run(self) -> None:
+        try:
+            synced, plain = lyrics_mod.fetch_lyrics(self.artist, self.title)
+        except Exception as exc:
+            self.signals.error.emit(self.path, str(exc))
+            return
+        self.signals.done.emit(self.path, synced, plain)
+
+
 class PlayerWidget(QWidget):
     """Plays local audio with a real queue: next/prev, shuffle, repeat, auto-advance."""
+
+    now_playing = Signal(str, str)   # title, artist
+    state_changed = Signal(bool)     # True = playing
 
     def __init__(self, settings) -> None:
         super().__init__()
         self.settings = settings
+        self._current_path = ""
         self.player = QMediaPlayer(self)
         self.audio = QAudioOutput(self)
         self.player.setAudioOutput(self.audio)
@@ -128,6 +157,11 @@ class PlayerWidget(QWidget):
         lyr_label.setObjectName("sectionLabel")
         lyr_header.addWidget(lyr_label)
         lyr_header.addStretch(1)
+        self.find_lyrics_btn = QPushButton("  Find lyrics")
+        self.find_lyrics_btn.setIcon(theme.icon("fa5s.search", theme.TEXT))
+        self.find_lyrics_btn.setToolTip("Search online and save synced lyrics for this track")
+        self.find_lyrics_btn.clicked.connect(self._find_lyrics)
+        lyr_header.addWidget(self.find_lyrics_btn)
         self.lyrics_toggle = QPushButton("  Collapse")
         self.lyrics_toggle.setIcon(theme.icon("fa5s.chevron-up", theme.TEXT))
         self.lyrics_toggle.clicked.connect(self._toggle_lyrics)
@@ -337,12 +371,16 @@ class PlayerWidget(QWidget):
     def _load_and_play(self, path: str) -> None:
         if not path or not os.path.exists(path):
             return
+        self._current_path = path
         if self.now_panel.isHidden():
             self._toggle_minimise()
         tags = metadata_mod.read_tags(path)
         stem = os.path.splitext(os.path.basename(path))[0]
-        self.title_label.setText(tags.get("title") or stem)
-        self.artist_label.setText(tags.get("artist") or "")
+        title = tags.get("title") or stem
+        artist = tags.get("artist") or ""
+        self.title_label.setText(title)
+        self.artist_label.setText(artist)
+        self.now_playing.emit(title, artist)
         self._load_cover(path)
 
         self._lyrics = lrc_mod.load_synced(path)
@@ -447,6 +485,59 @@ class PlayerWidget(QWidget):
     def _on_state(self, state) -> None:
         playing = state == QMediaPlayer.PlayingState
         self.play_btn.setIcon(theme.icon("fa5s.pause" if playing else "fa5s.play", "white"))
+        self.state_changed.emit(playing)
+
+    # -- public controls (for the mini-player bar) -------------------------
+    def toggle_play(self) -> None:
+        self._toggle_play()
+
+    def play_next(self) -> None:
+        self._advance(1)
+
+    def play_prev(self) -> None:
+        self._advance(-1)
+
+    # -- fetch lyrics on demand -------------------------------------------
+    def _find_lyrics(self) -> None:
+        if not self._current_path:
+            return
+        tags = metadata_mod.read_tags(self._current_path)
+        artist = tags.get("artist") or ""
+        title = tags.get("title") or os.path.splitext(os.path.basename(self._current_path))[0]
+        self.find_lyrics_btn.setEnabled(False)
+        self._reset_lyrics("Searching for lyrics…")
+        worker = _LyricsFetchWorker(artist, title, self._current_path)
+        worker.signals.done.connect(self._on_lyrics_fetched)
+        worker.signals.error.connect(self._on_lyrics_error)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_lyrics_fetched(self, path: str, synced, plain) -> None:
+        self.find_lyrics_btn.setEnabled(True)
+        if path != self._current_path:
+            return   # user moved on to another track
+        if synced:
+            lyrics_mod.write_lrc_sidecar(path, synced)
+            self._lyrics = lrc_mod.parse_lrc(synced)
+            self._active = -1
+            self.lyrics_list.clear()
+            for _, text in self._lyrics:
+                item = QListWidgetItem(text or "♪")
+                item.setTextAlignment(Qt.AlignCenter)
+                self.lyrics_list.addItem(item)
+        elif plain:
+            self._lyrics = []
+            self.lyrics_list.clear()
+            for line in plain.splitlines():
+                item = QListWidgetItem(line.strip())
+                item.setTextAlignment(Qt.AlignCenter)
+                self.lyrics_list.addItem(item)
+        else:
+            self._reset_lyrics("No lyrics found for this track.")
+
+    def _on_lyrics_error(self, path: str, message: str) -> None:
+        self.find_lyrics_btn.setEnabled(True)
+        if path == self._current_path:
+            self._reset_lyrics(f"Lyrics search failed: {message}")
 
     def _on_media_status(self, status) -> None:
         if status == QMediaPlayer.EndOfMedia:

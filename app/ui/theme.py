@@ -160,6 +160,12 @@ QScrollBar::handle:vertical:hover {{ background: {TEXT_DIM}; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; }}
 QScrollArea {{ border: none; }}
 
+/* Mini-player bar */
+QFrame#miniBar {{
+    background: {BG_ALT};
+    border-top: 1px solid {BORDER};
+}}
+
 /* Player */
 QLabel#cover {{
     background: {CARD};

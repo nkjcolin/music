@@ -69,10 +69,14 @@ class MainWindow(QWidget):
         self.queue = QueueManager(self.settings.concurrency)
         self._last_clip = ""
 
-        root = QHBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
-        root.addWidget(self._build_sidebar())
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        body.addWidget(self._build_sidebar())
 
         self.stack = QStackedWidget()
         self.queue_page = QueueWidget()
@@ -83,9 +87,12 @@ class MainWindow(QWidget):
         self.stack.addWidget(self._build_library_page())     # 2
         self.stack.addWidget(self._build_player_page())      # 3
         self.stack.addWidget(self._build_settings_page())    # 4
-        root.addWidget(self.stack, 1)
+        body.addWidget(self.stack, 1)
+        outer.addLayout(body, 1)
+        outer.addWidget(self._build_mini_bar())
 
         self.library_page.play_requested.connect(self._play_in_app)
+        self._wire_player_bar()
         self._wire_queue()
         self._setup_clipboard()
         self._select_nav(0)
@@ -417,6 +424,60 @@ class MainWindow(QWidget):
     def _play_in_app(self, path: str) -> None:
         self.player_page.play_file(path)
         self._select_nav(3)  # Player page
+
+    # -- mini-player bar (persistent across pages) -------------------------
+    def _build_mini_bar(self) -> QWidget:
+        self.mini_bar = QFrame()
+        self.mini_bar.setObjectName("miniBar")
+        lay = QHBoxLayout(self.mini_bar)
+        lay.setContentsMargins(16, 8, 16, 8)
+        lay.setSpacing(10)
+
+        self.mini_prev = self._mini_btn("fa5s.step-backward", "Previous",
+                                        lambda: self.player_page.play_prev())
+        lay.addWidget(self.mini_prev)
+        self.mini_play = self._mini_btn("fa5s.play", "Play / pause",
+                                        lambda: self.player_page.toggle_play())
+        lay.addWidget(self.mini_play)
+        self.mini_next = self._mini_btn("fa5s.step-forward", "Next",
+                                        lambda: self.player_page.play_next())
+        lay.addWidget(self.mini_next)
+
+        self.mini_title = QLabel("Nothing playing")
+        self.mini_title.setStyleSheet("font-weight: 600;")
+        lay.addWidget(self.mini_title)
+        self.mini_artist = QLabel("")
+        self.mini_artist.setStyleSheet(f"color: {theme.TEXT_DIM};")
+        lay.addWidget(self.mini_artist)
+        lay.addStretch(1)
+
+        open_player = QPushButton("  Open player")
+        open_player.setIcon(theme.icon("fa5s.headphones", theme.TEXT))
+        open_player.clicked.connect(lambda: self._select_nav(3))
+        lay.addWidget(open_player)
+
+        self.mini_bar.setVisible(False)   # appears once something plays
+        return self.mini_bar
+
+    def _mini_btn(self, icon_name: str, tip: str, slot) -> QPushButton:
+        btn = QPushButton()
+        btn.setIcon(theme.icon(icon_name, theme.TEXT))
+        btn.setToolTip(tip)
+        btn.setFixedSize(34, 34)
+        btn.clicked.connect(slot)
+        return btn
+
+    def _wire_player_bar(self) -> None:
+        self.player_page.now_playing.connect(self._on_now_playing)
+        self.player_page.state_changed.connect(self._on_player_state)
+
+    def _on_now_playing(self, title: str, artist: str) -> None:
+        self.mini_bar.setVisible(True)
+        self.mini_title.setText(title)
+        self.mini_artist.setText(f"— {artist}" if artist else "")
+
+    def _on_player_state(self, playing: bool) -> None:
+        self.mini_play.setIcon(theme.icon("fa5s.pause" if playing else "fa5s.play", theme.TEXT))
 
     # -- settings page -----------------------------------------------------
     def _build_settings_page(self) -> QWidget:
