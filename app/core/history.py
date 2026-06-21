@@ -6,9 +6,17 @@ import json
 import os
 import time
 
-from .settings import history_path
-
 _MAX = 500
+
+
+def history_path() -> str:
+    """Path to the history file.
+
+    Imported lazily from :mod:`settings` so this module (and its tests) don't
+    pull in PySide6 just to resolve a path.
+    """
+    from .settings import history_path as _resolve
+    return _resolve()
 
 
 def _load_raw(path: str) -> list:
