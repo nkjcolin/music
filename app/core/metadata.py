@@ -254,6 +254,16 @@ def read_cover(path: str) -> bytes | None:
     return None
 
 
+def read_duration(path: str) -> float | None:
+    """Return track length in seconds (for the library), or ``None``."""
+    try:
+        audio = mutagen.File(path)
+        length = getattr(getattr(audio, "info", None), "length", None)
+        return float(length) if length else None
+    except Exception:
+        return None
+
+
 def read_tags(path: str) -> dict:
     """Read editable text tags from a media file as a flat ``{field: str}`` dict.
 

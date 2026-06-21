@@ -71,3 +71,14 @@ def rename_media(old_path: str, new_stem: str) -> str:
                 pass
 
     return new_path
+
+
+def delete_media(path: str) -> None:
+    """Delete a media file and its lyric sidecar. Raises ``OSError`` on failure."""
+    os.remove(path)
+    lrc = lrc_mod.lrc_path_for(path)
+    if lrc and os.path.exists(lrc):
+        try:
+            os.remove(lrc)
+        except OSError:
+            pass
