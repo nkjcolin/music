@@ -218,7 +218,29 @@ class QueueManager(QObject):
             self._save()
 
     def remove(self, item_id: str) -> None:
+        item = self.items.get(item_id)
+        if item:
+            item.cancel_event.set()   # stop it if it happens to be running
         self.items.pop(item_id, None)
+        self._save()
+
+    def clear_all(self) -> None:
+        for item in self.items.values():
+            item.cancel_event.set()
+        self.items.clear()
+        self._save()
+
+    def move(self, item_id: str, delta: int) -> None:
+        """Reorder a not-yet-started item; affects dispatch order on resume."""
+        ids = list(self.items.keys())
+        if item_id not in ids:
+            return
+        i = ids.index(item_id)
+        j = i + delta
+        if j < 0 or j >= len(ids):
+            return
+        ids[i], ids[j] = ids[j], ids[i]
+        self.items = {k: self.items[k] for k in ids}
         self._save()
 
     # -- persistence -------------------------------------------------------

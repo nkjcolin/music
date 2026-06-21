@@ -23,8 +23,15 @@ KEY_CLIPBOARD = "features/clipboard"    # auto-detect links on the clipboard
 KEY_ARCHIVE = "features/archive"        # skip already-downloaded tracks
 KEY_PLAYER_SHUFFLE = "player/shuffle"   # player shuffle on/off
 KEY_PLAYER_REPEAT = "player/repeat"     # "off" | "all" | "one"
+KEY_COOKIES = "download/cookies_browser"    # "" = none, else browser name
+KEY_SPONSORBLOCK = "download/sponsorblock"  # remove sponsor/intro/outro segments
+KEY_EMBED_SUBS = "download/embed_subs"      # embed subtitles into video
+KEY_EMBED_CHAPTERS = "download/embed_chapters"  # embed chapters into video
+KEY_EMBED_THUMBNAIL = "download/embed_thumbnail"  # use thumbnail as cover art
 
 REPEAT_MODES = ("off", "all", "one")
+# Browsers yt-dlp can read cookies from (for age-restricted / private media).
+COOKIE_BROWSERS = ["", "chrome", "edge", "firefox", "brave", "opera", "vivaldi", "chromium"]
 
 DEFAULT_CONCURRENCY = 3
 BITRATES = ["128", "192", "256", "320"]
@@ -219,3 +226,45 @@ class AppSettings:
     @player_repeat.setter
     def player_repeat(self, value: str) -> None:
         self._s.setValue(KEY_PLAYER_REPEAT, value if value in REPEAT_MODES else "off")
+
+    # --- advanced download options ---
+    @property
+    def cookies_browser(self) -> str:
+        value = self._s.value(KEY_COOKIES, "", type=str)
+        return value if value in COOKIE_BROWSERS else ""
+
+    @cookies_browser.setter
+    def cookies_browser(self, value: str) -> None:
+        self._s.setValue(KEY_COOKIES, value if value in COOKIE_BROWSERS else "")
+
+    @property
+    def sponsorblock(self) -> bool:
+        return self._s.value(KEY_SPONSORBLOCK, False, type=bool)
+
+    @sponsorblock.setter
+    def sponsorblock(self, value: bool) -> None:
+        self._s.setValue(KEY_SPONSORBLOCK, bool(value))
+
+    @property
+    def embed_subs(self) -> bool:
+        return self._s.value(KEY_EMBED_SUBS, False, type=bool)
+
+    @embed_subs.setter
+    def embed_subs(self, value: bool) -> None:
+        self._s.setValue(KEY_EMBED_SUBS, bool(value))
+
+    @property
+    def embed_chapters(self) -> bool:
+        return self._s.value(KEY_EMBED_CHAPTERS, False, type=bool)
+
+    @embed_chapters.setter
+    def embed_chapters(self, value: bool) -> None:
+        self._s.setValue(KEY_EMBED_CHAPTERS, bool(value))
+
+    @property
+    def embed_thumbnail(self) -> bool:
+        return self._s.value(KEY_EMBED_THUMBNAIL, True, type=bool)
+
+    @embed_thumbnail.setter
+    def embed_thumbnail(self, value: bool) -> None:
+        self._s.setValue(KEY_EMBED_THUMBNAIL, bool(value))

@@ -17,6 +17,9 @@ from .naming import build_outtmpl
 from .paths import ffmpeg_path
 from .settings import CODEC_EXT
 
+# SponsorBlock categories removed when the user enables it (YouTube only).
+_SPONSOR_CATS = ["sponsor", "intro", "outro", "selfpromo", "preview", "music_offtopic"]
+
 
 @dataclass
 class DownloadOptions:
@@ -33,6 +36,11 @@ class DownloadOptions:
     archive_path: str | None = None
     fetch_lyrics: bool = True
     embed_metadata: bool = True
+    embed_thumbnail: bool = True   # embed the thumbnail as cover art
+    cookies_browser: str = ""      # read cookies from this browser ("" = none)
+    sponsorblock: bool = False     # remove sponsor/intro/outro segments
+    embed_subs: bool = False       # embed subtitles (video)
+    embed_chapters: bool = False   # embed chapters (video)
 
     @property
     def audio_ext(self) -> str:
@@ -128,17 +136,18 @@ class DownloadWorker(QRunnable):
             opts["ffmpeg_location"] = ff
         if o.ratelimit_kbps and o.ratelimit_kbps > 0:
             opts["ratelimit"] = o.ratelimit_kbps * 1024
+        if o.cookies_browser:
+            # yt-dlp reads cookies directly from the browser's profile.
+            opts["cookiesfrombrowser"] = (o.cookies_browser,)
 
+        pps: list[dict] = []
         if o.fmt == "audio":
             opts["format"] = "bestaudio/best"
-            pp = {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": o.codec,
-            }
+            extract = {"key": "FFmpegExtractAudio", "preferredcodec": o.codec}
             # Lossless/uncompressed codecs ignore a bitrate target.
             if o.codec not in ("flac", "wav"):
-                pp["preferredquality"] = o.bitrate
-            opts["postprocessors"] = [pp]
+                extract["preferredquality"] = o.bitrate
+            pps.append(extract)
         else:
             res = self.item.options.resolution
             if res and res != "Best":
@@ -149,6 +158,22 @@ class DownloadWorker(QRunnable):
             else:
                 opts["format"] = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
             opts["merge_output_format"] = "mp4"
+            if o.embed_subs:
+                opts["writesubtitles"] = True
+                opts["writeautomaticsub"] = True
+                opts["subtitleslangs"] = ["en.*", "en"]
+                pps.append({"key": "FFmpegEmbedSubtitle"})
+            if o.embed_chapters:
+                pps.append({"key": "FFmpegMetadata", "add_chapters": True})
+
+        if o.sponsorblock:
+            # Fetch segments (early) then cut them out of the media (YouTube only).
+            pps.insert(0, {"key": "SponsorBlock", "categories": _SPONSOR_CATS,
+                           "when": "after_filter"})
+            pps.append({"key": "ModifyChapters", "remove_sponsor_segments": list(_SPONSOR_CATS)})
+
+        if pps:
+            opts["postprocessors"] = pps
         return opts
 
     def _final_path(self, info: dict, ydl: yt_dlp.YoutubeDL) -> str:
@@ -284,7 +309,9 @@ class DownloadWorker(QRunnable):
             if item.options.embed_metadata:
                 self.signals.status.emit(item.id, "Tagging")
                 try:
-                    metadata_mod.embed(final, info, plain_lyrics)
+                    # Dropping the thumbnail makes the embedder skip cover art.
+                    tag_info = info if o.embed_thumbnail else {**info, "thumbnail": None}
+                    metadata_mod.embed(final, tag_info, plain_lyrics)
                 except Exception as exc:  # non-fatal
                     self.signals.log.emit(f"[{name}] metadata skipped: {exc}")
 

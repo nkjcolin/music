@@ -31,6 +31,7 @@ from ..core.search import SearchWorker
 from ..core.settings import (
     BITRATES,
     CODECS,
+    COOKIE_BROWSERS,
     RESOLUTIONS,
     AppSettings,
     archive_path,
@@ -43,8 +44,20 @@ from .search_widget import SearchWidget
 
 
 class MainWindow(QWidget):
+    # Download presets: label -> (fmt, codec, bitrate, resolution); None = Custom.
+    _PRESETS = [
+        ("Custom", None),
+        ("MP3 · 320 kbps", ("audio", "mp3", "320", None)),
+        ("MP3 · 192 kbps", ("audio", "mp3", "192", None)),
+        ("M4A · 256 kbps", ("audio", "m4a", "256", None)),
+        ("FLAC (lossless)", ("audio", "flac", None, None)),
+        ("Video · 1080p", ("video", None, None, "1080")),
+        ("Video · 720p", ("video", None, None, "720")),
+    ]
+
     def __init__(self) -> None:
         super().__init__()
+        self._applying_preset = False
         self.setObjectName("root")
         self.setWindowTitle("Songtify — Media Downloader")
         self.setWindowIcon(QIcon(icon_path()))
@@ -153,6 +166,14 @@ class MainWindow(QWidget):
         fc.setContentsMargins(22, 16, 22, 16)
         fc.setSpacing(8)
 
+        fc.addWidget(self._label("Preset"))
+        self.preset_combo = QComboBox()
+        for label, _ in self._PRESETS:
+            self.preset_combo.addItem(label)
+        self.preset_combo.currentIndexChanged.connect(self._apply_preset)
+        fc.addWidget(self.preset_combo)
+        fc.addSpacing(14)
+
         fc.addWidget(self._label("Format"))
         self.seg_group = QButtonGroup(self)
         self.audio_btn = QPushButton("  Audio")
@@ -185,6 +206,12 @@ class MainWindow(QWidget):
         self.resolution_combo.setVisible(False)
         fc.addStretch(1)
         lay.addWidget(fmt_card)
+
+        # Manual control changes drop the preset back to "Custom".
+        self.bitrate_combo.currentIndexChanged.connect(self._mark_custom_preset)
+        self.codec_combo.currentIndexChanged.connect(self._mark_custom_preset)
+        self.resolution_combo.currentIndexChanged.connect(self._mark_custom_preset)
+        self.audio_btn.toggled.connect(self._mark_custom_preset)
 
         # -- Search card --
         search_card = QFrame()
@@ -258,6 +285,32 @@ class MainWindow(QWidget):
             self.codec_combo.setCurrentIndex(idx)
         return page
 
+    def _apply_preset(self, idx: int) -> None:
+        if not (0 <= idx < len(self._PRESETS)):
+            return
+        spec = self._PRESETS[idx][1]
+        if spec is None:   # "Custom" — leave the controls as they are
+            return
+        fmt, codec, bitrate, res = spec
+        self._applying_preset = True
+        (self.audio_btn if fmt == "audio" else self.video_btn).setChecked(True)
+        if codec:
+            ci = self.codec_combo.findData(codec)
+            if ci >= 0:
+                self.codec_combo.setCurrentIndex(ci)
+        if bitrate:
+            self.bitrate_combo.setCurrentText(bitrate)
+        if res:
+            self.resolution_combo.setCurrentText(res)
+        self._applying_preset = False
+
+    def _mark_custom_preset(self, *_args) -> None:
+        # A manual tweak means the selection no longer matches a named preset.
+        if self._applying_preset:
+            return
+        if self.preset_combo.currentIndex() != 0:
+            self.preset_combo.setCurrentIndex(0)
+
     def _on_format_toggled(self, audio_on: bool) -> None:
         for w_ in (self.bitrate_label, self.bitrate_combo, self.codec_label, self.codec_combo):
             w_.setVisible(audio_on)
@@ -286,6 +339,10 @@ class MainWindow(QWidget):
         clear_btn.setIcon(theme.icon("fa5s.broom", theme.TEXT))
         clear_btn.clicked.connect(self._clear_finished)
         header.addWidget(clear_btn)
+        clear_all_btn = QPushButton("  Clear all")
+        clear_all_btn.setIcon(theme.icon("fa5s.trash", theme.TEXT))
+        clear_all_btn.clicked.connect(self._clear_all)
+        header.addWidget(clear_all_btn)
         lay.addLayout(header)
 
         lay.addWidget(self.queue_page, 1)
@@ -310,6 +367,18 @@ class MainWindow(QWidget):
                 self.queue.remove(item_id)
         if not self.queue_page.rows:
             self.queue_page.empty.setVisible(True)
+
+    def _clear_all(self) -> None:
+        self.queue.clear_all()
+        self.queue_page.clear_all_rows()
+
+    def _remove_item(self, item_id: str) -> None:
+        self.queue.remove(item_id)
+        self.queue_page.remove_row(item_id)
+
+    def _move_item(self, item_id: str, delta: int) -> None:
+        self.queue.move(item_id, delta)
+        self.queue_page.move_row(item_id, delta)
 
     # -- library page ------------------------------------------------------
     def _build_library_page(self) -> QWidget:
@@ -456,6 +525,44 @@ class MainWindow(QWidget):
         self.clipboard_check.toggled.connect(lambda v: setattr(self.settings, "clipboard_watch", v))
         c.addWidget(self.clipboard_check)
 
+        # Advanced download options
+        c.addWidget(self._label("Advanced download"))
+
+        ck_row = QHBoxLayout()
+        ck_row.addWidget(QLabel("Use cookies from browser"))
+        self.cookies_combo = QComboBox()
+        for b in COOKIE_BROWSERS:
+            self.cookies_combo.addItem("None" if b == "" else b.capitalize(), b)
+        idx = self.cookies_combo.findData(self.settings.cookies_browser)
+        if idx >= 0:
+            self.cookies_combo.setCurrentIndex(idx)
+        self.cookies_combo.currentIndexChanged.connect(
+            lambda: setattr(self.settings, "cookies_browser", self.cookies_combo.currentData() or ""))
+        self.cookies_combo.setToolTip("Lets you download age-restricted or private items you can access in that browser")
+        ck_row.addWidget(self.cookies_combo)
+        ck_row.addStretch(1)
+        c.addLayout(ck_row)
+
+        self.thumbnail_check = QCheckBox("Embed thumbnail as cover art")
+        self.thumbnail_check.setChecked(self.settings.embed_thumbnail)
+        self.thumbnail_check.toggled.connect(lambda v: setattr(self.settings, "embed_thumbnail", v))
+        c.addWidget(self.thumbnail_check)
+
+        self.sponsorblock_check = QCheckBox("Remove SponsorBlock segments (sponsor / intro / outro, YouTube)")
+        self.sponsorblock_check.setChecked(self.settings.sponsorblock)
+        self.sponsorblock_check.toggled.connect(lambda v: setattr(self.settings, "sponsorblock", v))
+        c.addWidget(self.sponsorblock_check)
+
+        self.subs_check = QCheckBox("Embed subtitles in videos (English, incl. auto-generated)")
+        self.subs_check.setChecked(self.settings.embed_subs)
+        self.subs_check.toggled.connect(lambda v: setattr(self.settings, "embed_subs", v))
+        c.addWidget(self.subs_check)
+
+        self.chapters_check = QCheckBox("Embed chapters in videos")
+        self.chapters_check.setChecked(self.settings.embed_chapters)
+        self.chapters_check.toggled.connect(lambda v: setattr(self.settings, "embed_chapters", v))
+        c.addWidget(self.chapters_check)
+
         # yt-dlp updater
         c.addWidget(self._label("Downloader engine"))
         u_row = QHBoxLayout()
@@ -553,6 +660,11 @@ class MainWindow(QWidget):
             archive_path=archive_path(),
             fetch_lyrics=self.settings.fetch_lyrics,
             embed_metadata=self.settings.embed_metadata,
+            embed_thumbnail=self.settings.embed_thumbnail,
+            cookies_browser=self.settings.cookies_browser,
+            sponsorblock=self.settings.sponsorblock,
+            embed_subs=self.settings.embed_subs,
+            embed_chapters=self.settings.embed_chapters,
         )
 
     # -- search ------------------------------------------------------------
@@ -639,6 +751,8 @@ class MainWindow(QWidget):
         self.queue_page.cancel_requested.connect(self.queue.cancel)
         self.queue_page.retry_requested.connect(self.queue.retry)
         self.queue_page.rename_requested.connect(self.queue.rename)
+        self.queue_page.move_requested.connect(self._move_item)
+        self.queue_page.remove_requested.connect(self._remove_item)
 
     def _log(self, message: str) -> None:
         self.log_area.append(message)

@@ -28,6 +28,8 @@ class QueueRow(QFrame):
     cancel_requested = Signal(str)
     retry_requested = Signal(str)
     rename_requested = Signal(str, str)
+    move_requested = Signal(str, int)   # item_id, delta (-1 up / +1 down)
+    remove_requested = Signal(str)
 
     def __init__(self, item_id: str, name: str, fmt: str) -> None:
         super().__init__()
@@ -60,6 +62,16 @@ class QueueRow(QFrame):
         self._set_status_style("Pending")
         top.addWidget(self.status_label)
 
+        self.up_btn = self._mini("fa5s.chevron-up", "Move up")
+        self.up_btn.clicked.connect(lambda: self.move_requested.emit(self.item_id, -1))
+        self.up_btn.setVisible(False)
+        top.addWidget(self.up_btn)
+
+        self.down_btn = self._mini("fa5s.chevron-down", "Move down")
+        self.down_btn.clicked.connect(lambda: self.move_requested.emit(self.item_id, 1))
+        self.down_btn.setVisible(False)
+        top.addWidget(self.down_btn)
+
         self.open_btn = self._mini("fa5s.folder-open", "Open file location")
         self.open_btn.clicked.connect(self._open_location)
         self.open_btn.setVisible(False)
@@ -73,6 +85,10 @@ class QueueRow(QFrame):
         self.cancel_btn = self._mini("fa5s.times", "Cancel")
         self.cancel_btn.clicked.connect(lambda: self.cancel_requested.emit(self.item_id))
         top.addWidget(self.cancel_btn)
+
+        self.remove_btn = self._mini("fa5s.trash", "Remove from queue")
+        self.remove_btn.clicked.connect(lambda: self.remove_requested.emit(self.item_id))
+        top.addWidget(self.remove_btn)
 
         outer.addLayout(top)
 
@@ -120,6 +136,10 @@ class QueueRow(QFrame):
         self.name_edit.setReadOnly(status not in ("Pending", "Queued"))
         self.cancel_btn.setVisible(active)
         self.retry_btn.setVisible(status in ("Error", "Cancelled", "Skipped"))
+        # Reordering only makes sense for items that haven't started yet.
+        reorderable = status in ("Pending", "Queued")
+        self.up_btn.setVisible(reorderable)
+        self.down_btn.setVisible(reorderable)
         if status == "Done":
             self.progress.setValue(100)
             self.detail.setText("")
@@ -150,6 +170,8 @@ class QueueWidget(QWidget):
     cancel_requested = Signal(str)
     retry_requested = Signal(str)
     rename_requested = Signal(str, str)
+    move_requested = Signal(str, int)
+    remove_requested = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -179,6 +201,8 @@ class QueueWidget(QWidget):
         row.cancel_requested.connect(self.cancel_requested)
         row.retry_requested.connect(self.retry_requested)
         row.rename_requested.connect(self.rename_requested)
+        row.move_requested.connect(self.move_requested)
+        row.remove_requested.connect(self.remove_requested)
         self.rows[item.id] = row
         # insert before the trailing stretch
         self._vbox.insertWidget(self._vbox.count() - 1, row)
@@ -203,3 +227,31 @@ class QueueWidget(QWidget):
         if row:
             row.set_status("Error")
             row.detail.setText(message[:60])
+
+    def remove_row(self, item_id: str) -> None:
+        row = self.rows.pop(item_id, None)
+        if row:
+            self._vbox.removeWidget(row)
+            row.deleteLater()
+        if not self.rows:
+            self.empty.setVisible(True)
+
+    def clear_all_rows(self) -> None:
+        for item_id in list(self.rows):
+            self.remove_row(item_id)
+
+    def move_row(self, item_id: str, delta: int) -> None:
+        ordered = [w for w in (self._vbox.itemAt(i).widget() for i in range(self._vbox.count()))
+                   if isinstance(w, QueueRow)]
+        ids = [w.item_id for w in ordered]
+        if item_id not in ids:
+            return
+        i = ids.index(item_id)
+        j = i + delta
+        if j < 0 or j >= len(ordered):
+            return
+        ordered[i], ordered[j] = ordered[j], ordered[i]
+        for w in ordered:
+            self._vbox.removeWidget(w)
+        for w in ordered:                       # re-insert in new order before the stretch
+            self._vbox.insertWidget(self._vbox.count() - 1, w)
