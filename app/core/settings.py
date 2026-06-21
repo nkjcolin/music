@@ -28,6 +28,7 @@ KEY_SPONSORBLOCK = "download/sponsorblock"  # remove sponsor/intro/outro segment
 KEY_EMBED_SUBS = "download/embed_subs"      # embed subtitles into video
 KEY_EMBED_CHAPTERS = "download/embed_chapters"  # embed chapters into video
 KEY_EMBED_THUMBNAIL = "download/embed_thumbnail"  # use thumbnail as cover art
+KEY_NOTIFICATIONS = "features/notifications"  # desktop notification on completion
 
 REPEAT_MODES = ("off", "all", "one")
 # Browsers yt-dlp can read cookies from (for age-restricted / private media).
@@ -81,6 +82,11 @@ def archive_path() -> str:
 def queue_state_path() -> str:
     """Path to the persisted queue (restored on next launch)."""
     return os.path.join(_app_data_dir(), "queue.json")
+
+
+def history_path() -> str:
+    """Path to the persisted download history."""
+    return os.path.join(_app_data_dir(), "history.json")
 
 
 class AppSettings:
@@ -268,3 +274,11 @@ class AppSettings:
     @embed_thumbnail.setter
     def embed_thumbnail(self, value: bool) -> None:
         self._s.setValue(KEY_EMBED_THUMBNAIL, bool(value))
+
+    @property
+    def notifications(self) -> bool:
+        return self._s.value(KEY_NOTIFICATIONS, True, type=bool)
+
+    @notifications.setter
+    def notifications(self, value: bool) -> None:
+        self._s.setValue(KEY_NOTIFICATIONS, bool(value))

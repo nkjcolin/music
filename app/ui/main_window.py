@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import os
+
 from PySide6.QtCore import Qt, QThreadPool
-from PySide6.QtGui import QGuiApplication, QIcon
+from PySide6.QtGui import QAction, QGuiApplication, QIcon
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -13,15 +16,18 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSpinBox,
     QStackedWidget,
+    QSystemTrayIcon,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
+from ..core import history as history_mod
 from ..core import resolvers, updater
 from ..core.downloader import DownloadOptions
 from ..core.naming import TEMPLATE_HELP
@@ -37,6 +43,7 @@ from ..core.settings import (
     archive_path,
 )
 from . import theme
+from .history_widget import HistoryWidget
 from .library_widget import LibraryWidget
 from .player_widget import PlayerWidget
 from .queue_widget import QueueWidget
@@ -82,19 +89,23 @@ class MainWindow(QWidget):
         self.queue_page = QueueWidget()
         self.library_page = LibraryWidget(self.settings)
         self.player_page = PlayerWidget(self.settings)
+        self.history_page = HistoryWidget()
         self.stack.addWidget(self._build_download_page())   # 0
         self.stack.addWidget(self._build_queue_page())       # 1
         self.stack.addWidget(self._build_library_page())     # 2
         self.stack.addWidget(self._build_player_page())      # 3
-        self.stack.addWidget(self._build_settings_page())    # 4
+        self.stack.addWidget(self._build_history_page())     # 4
+        self.stack.addWidget(self._build_settings_page())    # 5
         body.addWidget(self.stack, 1)
         outer.addLayout(body, 1)
         outer.addWidget(self._build_mini_bar())
 
         self.library_page.play_requested.connect(self._play_in_app)
+        self.history_page.redownload_requested.connect(self._redownload)
         self._wire_player_bar()
         self._wire_queue()
         self._setup_clipboard()
+        self._setup_tray()
         self._select_nav(0)
         self.queue.load_state()
 
@@ -118,6 +129,7 @@ class MainWindow(QWidget):
             ("Queue", "fa5s.list"),
             ("Library", "fa5s.compact-disc"),
             ("Player", "fa5s.headphones"),
+            ("History", "fa5s.history"),
             ("Settings", "fa5s.cog"),
         ]):
             btn = QPushButton(f"  {label}")
@@ -143,6 +155,8 @@ class MainWindow(QWidget):
             self.library_page.refresh()
         elif idx == 3:  # Player — rescan the music folder for the song list
             self.player_page.refresh_songs()
+        elif idx == 4:  # History — reload from disk
+            self.history_page.refresh()
 
     # -- download page -----------------------------------------------------
     def _build_download_page(self) -> QWidget:
@@ -342,6 +356,10 @@ class MainWindow(QWidget):
         self.pause_btn.setIcon(theme.icon("fa5s.pause", theme.TEXT))
         self.pause_btn.clicked.connect(self.queue.toggle_pause)
         header.addWidget(self.pause_btn)
+        retry_btn = QPushButton("  Retry failed")
+        retry_btn.setIcon(theme.icon("fa5s.redo", theme.TEXT))
+        retry_btn.clicked.connect(self.queue.retry_all_failed)
+        header.addWidget(retry_btn)
         clear_btn = QPushButton("  Clear finished")
         clear_btn.setIcon(theme.icon("fa5s.broom", theme.TEXT))
         clear_btn.clicked.connect(self._clear_finished)
@@ -424,6 +442,66 @@ class MainWindow(QWidget):
     def _play_in_app(self, path: str) -> None:
         self.player_page.play_file(path)
         self._select_nav(3)  # Player page
+
+    # -- history page ------------------------------------------------------
+    def _build_history_page(self) -> QWidget:
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(32, 28, 32, 28)
+        lay.setSpacing(14)
+        title = QLabel("History")
+        title.setObjectName("pageTitle")
+        lay.addWidget(title)
+        sub = QLabel("Everything you've downloaded. Re-download or open the file.")
+        sub.setStyleSheet(f"color: {theme.TEXT_DIM};")
+        lay.addWidget(sub)
+        lay.addWidget(self.history_page, 1)
+        return page
+
+    def _redownload(self, url: str, name: str) -> None:
+        if not url:
+            return
+        self.queue.add_resolved(url, name, self._current_options())
+        self._log(f"Re-downloading: {name}")
+        self._select_nav(1)
+
+    # -- system tray / notifications --------------------------------------
+    def _setup_tray(self) -> None:
+        self._tray = None
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        self._tray = QSystemTrayIcon(QIcon(icon_path()), self)
+        self._tray.setToolTip("Songtify")
+        menu = QMenu()
+        show_act = QAction("Show Songtify", self)
+        show_act.triggered.connect(self._show_from_tray)
+        quit_act = QAction("Quit", self)
+        quit_act.triggered.connect(QApplication.quit)
+        menu.addAction(show_act)
+        menu.addAction(quit_act)
+        self._tray.setContextMenu(menu)
+        self._tray.activated.connect(self._on_tray_activated)
+        self._tray.show()
+
+    def _on_tray_activated(self, reason) -> None:
+        if reason == QSystemTrayIcon.Trigger:
+            self._show_from_tray()
+
+    def _show_from_tray(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _on_download_finished(self, item_id: str, filepath: str) -> None:
+        """Record history and (optionally) notify when an item finishes."""
+        item = self.queue.items.get(item_id)
+        if item:
+            history_mod.add_entry(
+                item.name or os.path.basename(filepath), filepath, item.url, item.options.fmt)
+        if self.settings.notifications and self._tray:
+            self._tray.showMessage(
+                "Songtify", f"Saved: {os.path.basename(filepath)}",
+                QSystemTrayIcon.Information, 4000)
 
     # -- mini-player bar (persistent across pages) -------------------------
     def _build_mini_bar(self) -> QWidget:
@@ -585,6 +663,11 @@ class MainWindow(QWidget):
         self.clipboard_check.setChecked(self.settings.clipboard_watch)
         self.clipboard_check.toggled.connect(lambda v: setattr(self.settings, "clipboard_watch", v))
         c.addWidget(self.clipboard_check)
+
+        self.notify_check = QCheckBox("Show a desktop notification when a download finishes")
+        self.notify_check.setChecked(self.settings.notifications)
+        self.notify_check.toggled.connect(lambda v: setattr(self.settings, "notifications", v))
+        c.addWidget(self.notify_check)
 
         # Advanced download options
         c.addWidget(self._label("Advanced download"))
@@ -805,6 +888,7 @@ class MainWindow(QWidget):
         self.queue.item_progress.connect(self.queue_page.on_progress)
         self.queue.item_status.connect(self.queue_page.on_status)
         self.queue.item_finished.connect(self.queue_page.on_finished)
+        self.queue.item_finished.connect(self._on_download_finished)
         self.queue.item_error.connect(self.queue_page.on_error)
         self.queue.log.connect(self._log)
         self.queue.paused_changed.connect(self._on_paused_changed)

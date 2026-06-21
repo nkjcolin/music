@@ -153,6 +153,13 @@ class QueueRow(QFrame):
         self.filepath = filepath
         self.open_btn.setVisible(True)
 
+    def set_error(self, message: str) -> None:
+        self.set_status("Error")
+        self.detail.setText(message[:60])
+        # Full message available on hover (errors are often longer than the row).
+        self.detail.setToolTip(message)
+        self.setToolTip(message)
+
     def _open_location(self) -> None:
         if not self.filepath or not os.path.exists(self.filepath):
             return
@@ -225,8 +232,7 @@ class QueueWidget(QWidget):
     def on_error(self, item_id: str, message: str) -> None:
         row = self.rows.get(item_id)
         if row:
-            row.set_status("Error")
-            row.detail.setText(message[:60])
+            row.set_error(message)
 
     def remove_row(self, item_id: str) -> None:
         row = self.rows.pop(item_id, None)

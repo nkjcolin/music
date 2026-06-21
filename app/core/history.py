@@ -1,0 +1,55 @@
+"""Persistent download history (separate from the live queue)."""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+
+from .settings import history_path
+
+_MAX = 500
+
+
+def _load_raw(path: str) -> list:
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def load() -> list[dict]:
+    """Return history entries, most recent first."""
+    return _load_raw(history_path())
+
+
+def add_entry(name: str, path: str, url: str, fmt: str) -> None:
+    """Record a completed download. De-duplicates by output path."""
+    entries = _load_raw(history_path())
+    entries = [e for e in entries if e.get("path") != path]
+    entries.insert(0, {
+        "name": name,
+        "path": path,
+        "url": url,
+        "fmt": fmt,
+        "time": time.time(),
+    })
+    del entries[_MAX:]
+    _save(entries)
+
+
+def clear() -> None:
+    _save([])
+
+
+def _save(entries: list) -> None:
+    path = history_path()
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(entries, fh)
+        os.replace(tmp, path)
+    except OSError:
+        pass

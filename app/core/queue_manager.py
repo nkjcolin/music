@@ -211,6 +211,17 @@ class QueueManager(QObject):
         self.item_status.emit(item_id, "Pending")
         self._dispatch(item)
 
+    def retry_all_failed(self) -> int:
+        """Re-dispatch every errored or cancelled item. Returns how many."""
+        count = 0
+        for item_id, item in list(self.items.items()):
+            if item.status in ("Error", "Cancelled"):
+                self.retry(item_id)
+                count += 1
+        if count:
+            self.log.emit(f"Retrying {count} failed item(s).")
+        return count
+
     def rename(self, item_id: str, new_name: str) -> None:
         item = self.items.get(item_id)
         if item and not item.started:

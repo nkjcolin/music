@@ -195,6 +195,22 @@ class DownloadWorker(QRunnable):
                 return cand
         return base
 
+    def _download(self, ydl: yt_dlp.YoutubeDL, probe: dict | None) -> dict | None:
+        """Download the media, reusing probe metadata to avoid re-extraction.
+
+        When the duplicate check already extracted the metadata, hand it
+        straight to yt-dlp's downloader. Falls back to a fresh extraction if
+        that path produces nothing.
+        """
+        if probe is not None:
+            try:
+                info = self._unwrap(ydl.process_ie_result(probe, download=True))
+                if info is not None:
+                    return info
+            except Exception:
+                pass  # fall through to a clean extraction
+        return self._unwrap(ydl.extract_info(self.item.url, download=True))
+
     @staticmethod
     def _unwrap(info: dict | None) -> dict | None:
         """Unwrap a ``ytsearchN:`` / playlist results wrapper to a single entry."""
@@ -262,6 +278,7 @@ class DownloadWorker(QRunnable):
                 # Duplicate check: probe metadata (no media bytes) and skip only
                 # if the produced file is actually still on disk. A track whose
                 # file was deleted from the folder downloads again.
+                probe = None
                 if archive is not None:
                     self.signals.status.emit(item.id, "Checking")
                     probe = self._unwrap(ydl.extract_info(item.url, download=False))
@@ -278,7 +295,7 @@ class DownloadWorker(QRunnable):
                             return
 
                 self.signals.status.emit(item.id, "Downloading")
-                info = self._unwrap(ydl.extract_info(item.url, download=True))
+                info = self._download(ydl, probe)
                 if info is None:
                     raise RuntimeError("no media returned")
                 final = self._final_path(info, ydl)
