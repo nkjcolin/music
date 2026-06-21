@@ -3,6 +3,8 @@
 import os
 import re
 
+from . import lrc as lrc_mod
+
 try:
     import syncedlyrics
 except Exception:  # pragma: no cover - optional at runtime
@@ -63,12 +65,12 @@ def fetch_lyrics(artist: str, track: str) -> tuple[str | None, str | None]:
 
 
 def write_lrc_sidecar(media_path: str, lrc: str) -> str | None:
-    """Write an ``.lrc`` file next to ``media_path``. Returns the path or None."""
+    """Write an ``.lrc`` file into the ``Lyrics`` sub-folder. Returns path or None."""
     if not lrc:
         return None
-    base, _ = os.path.splitext(media_path)
-    lrc_path = base + ".lrc"
+    lrc_path = lrc_mod.sidecar_path(media_path)
     try:
+        os.makedirs(os.path.dirname(lrc_path), exist_ok=True)
         with open(lrc_path, "w", encoding="utf-8") as fh:
             fh.write(lrc)
         return lrc_path

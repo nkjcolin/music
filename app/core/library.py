@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+from . import lrc as lrc_mod
 from .naming import sanitize_filename
 
 MEDIA_EXTS = (".mp3", ".mp4", ".m4a", ".m4v")
@@ -58,11 +59,13 @@ def rename_media(old_path: str, new_stem: str) -> str:
 
     os.rename(old_path, new_path)
 
-    old_lrc = os.path.join(folder, old_stem + ".lrc")
-    if os.path.exists(old_lrc):
-        new_lrc = os.path.join(folder, clean + ".lrc")
+    # Move the matching lyric file (in the Lyrics sub-folder, or legacy sibling).
+    old_lrc = lrc_mod.lrc_path_for(old_path)
+    if old_lrc:
+        new_lrc = lrc_mod.sidecar_path(new_path)
         if not os.path.exists(new_lrc):
             try:
+                os.makedirs(os.path.dirname(new_lrc), exist_ok=True)
                 os.rename(old_lrc, new_lrc)
             except OSError:
                 pass
