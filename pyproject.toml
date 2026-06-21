@@ -1,6 +1,9 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+# Put the repo root on sys.path so `import app...` works under the bare
+# `pytest` runner (not just `python -m pytest`).
+pythonpath = ["."]
 
 [tool.ruff]
 line-length = 110
