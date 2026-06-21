@@ -1,8 +1,9 @@
-"""In-app audio player: song list, now-playing card, time-synced lyrics."""
+"""In-app audio player: song queue, now-playing card, time-synced lyrics."""
 
 from __future__ import annotations
 
 import os
+import random
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QPixmap
@@ -26,6 +27,9 @@ from ..core import metadata as metadata_mod
 from . import theme
 
 _AUDIO_EXTS = (".mp3", ".m4a", ".flac", ".wav", ".opus", ".ogg")
+_REPEAT_NEXT = {"off": "all", "all": "one", "one": "off"}
+_REPEAT_ICON = {"off": "mdi.repeat-off", "all": "mdi.repeat", "one": "mdi.repeat-once"}
+_REPEAT_TIP = {"off": "Repeat: off", "all": "Repeat: all", "one": "Repeat: one"}
 
 
 def _fmt_ms(ms: int) -> str:
@@ -34,7 +38,7 @@ def _fmt_ms(ms: int) -> str:
 
 
 class PlayerWidget(QWidget):
-    """Plays local audio, lists the folder's songs, and scrolls ``.lrc`` lyrics."""
+    """Plays local audio with a real queue: next/prev, shuffle, repeat, auto-advance."""
 
     def __init__(self, settings) -> None:
         super().__init__()
@@ -48,6 +52,10 @@ class PlayerWidget(QWidget):
         self._active = -1
         self._seeking = False
         self._song_paths: list[str] = []
+        self._play_order: list[int] = []   # indices into _song_paths, playback order
+        self._order_pos = -1               # position within _play_order
+        self._shuffle = bool(settings.player_shuffle)
+        self._repeat = settings.player_repeat
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -63,6 +71,7 @@ class PlayerWidget(QWidget):
         self.player.positionChanged.connect(self._on_position)
         self.player.durationChanged.connect(self._on_duration)
         self.player.playbackStateChanged.connect(self._on_state)
+        self.player.mediaStatusChanged.connect(self._on_media_status)
         self.player.errorOccurred.connect(self._on_error)
 
     # -- panels ------------------------------------------------------------
@@ -114,7 +123,6 @@ class PlayerWidget(QWidget):
         card.addWidget(open_btn, 0, Qt.AlignTop)
         lay.addLayout(card)
 
-        # Lyrics header with a collapse toggle.
         lyr_header = QHBoxLayout()
         lyr_label = QLabel("Lyrics")
         lyr_label.setObjectName("sectionLabel")
@@ -140,7 +148,12 @@ class PlayerWidget(QWidget):
         bar = QWidget()
         lay = QHBoxLayout(bar)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(12)
+        lay.setSpacing(10)
+
+        self.shuffle_btn = self._mini("fa5s.random", "Shuffle", self._toggle_shuffle)
+        lay.addWidget(self.shuffle_btn)
+        self.prev_btn = self._mini("fa5s.step-backward", "Previous", lambda: self._advance(-1))
+        lay.addWidget(self.prev_btn)
 
         self.play_btn = QPushButton()
         self.play_btn.setIcon(theme.icon("fa5s.play", "white"))
@@ -148,6 +161,12 @@ class PlayerWidget(QWidget):
         self.play_btn.setFixedSize(44, 44)
         self.play_btn.clicked.connect(self._toggle_play)
         lay.addWidget(self.play_btn)
+
+        self.next_btn = self._mini("fa5s.step-forward", "Next", lambda: self._advance(1))
+        lay.addWidget(self.next_btn)
+        self.repeat_btn = self._mini(_REPEAT_ICON[self._repeat], _REPEAT_TIP[self._repeat],
+                                     self._cycle_repeat)
+        lay.addWidget(self.repeat_btn)
 
         self.elapsed = QLabel("0:00")
         self.elapsed.setStyleSheet(f"color: {theme.TEXT_DIM};")
@@ -169,21 +188,28 @@ class PlayerWidget(QWidget):
         self.volume = QSlider(Qt.Horizontal)
         self.volume.setRange(0, 100)
         self.volume.setValue(85)
-        self.volume.setFixedWidth(100)
+        self.volume.setFixedWidth(90)
         self.volume.valueChanged.connect(lambda v: self.audio.setVolume(v / 100.0))
         lay.addWidget(self.volume)
 
-        self.minimise_btn = QPushButton()
-        self.minimise_btn.setIcon(theme.icon("fa5s.compress", theme.TEXT))
-        self.minimise_btn.setToolTip("Minimise now playing to browse other songs")
-        self.minimise_btn.setFixedSize(38, 38)
-        self.minimise_btn.clicked.connect(self._toggle_minimise)
+        self.minimise_btn = self._mini("fa5s.compress",
+                                        "Minimise now playing to browse other songs",
+                                        self._toggle_minimise)
         lay.addWidget(self.minimise_btn)
+        self._sync_mode_buttons()
         return bar
+
+    def _mini(self, icon_name: str, tip: str, slot) -> QPushButton:
+        btn = QPushButton()
+        btn.setIcon(theme.icon(icon_name, theme.TEXT))
+        btn.setToolTip(tip)
+        btn.setFixedSize(38, 38)
+        btn.clicked.connect(slot)
+        return btn
 
     # -- public ------------------------------------------------------------
     def refresh_songs(self) -> None:
-        """Rescan the music folder and rebuild the song list."""
+        """Rescan the music folder and rebuild the song list + play order."""
         current = self.player.source().toLocalFile() if self.player.source().isValid() else ""
         self.song_list.clear()
         self._song_paths = []
@@ -197,12 +223,121 @@ class PlayerWidget(QWidget):
                 self.song_list.setCurrentItem(item)
         if not self._song_paths:
             self.song_list.addItem(QListWidgetItem("No songs in your music folder yet."))
+        # Re-anchor the play order on the current track (if still present).
+        anchor = self._index_of(current) if current else None
+        self._rebuild_play_order(anchor)
 
     def play_file(self, path: str) -> None:
-        """Load ``path``, show its tags/cover/lyrics, and start playback."""
+        """Play a specific file, syncing the queue position to it."""
         if not path or not os.path.exists(path):
             return
-        if self.now_panel.isHidden():           # un-minimise when a song starts
+        idx = self._index_of(path)
+        if idx is None:
+            # A file outside the folder list (Open file…): play standalone.
+            self._order_pos = -1
+        elif not self._play_order or idx not in self._play_order:
+            self._rebuild_play_order(anchor=idx)
+        else:
+            self._order_pos = self._play_order.index(idx)
+        self._load_and_play(path)
+
+    def stop(self) -> None:
+        self.player.stop()
+
+    # -- queue order -------------------------------------------------------
+    def _index_of(self, path: str) -> int | None:
+        if not path:
+            return None
+        target = os.path.normcase(path)
+        for i, p in enumerate(self._song_paths):
+            if os.path.normcase(p) == target:
+                return i
+        return None
+
+    def _rebuild_play_order(self, anchor: int | None = None) -> None:
+        order = list(range(len(self._song_paths)))
+        if self._shuffle:
+            random.shuffle(order)
+            if anchor is not None and anchor in order:
+                order.remove(anchor)
+                order.insert(0, anchor)
+        self._play_order = order
+        if anchor is not None and anchor in order:
+            self._order_pos = order.index(anchor)
+        else:
+            self._order_pos = 0 if order else -1
+
+    def _advance(self, delta: int) -> None:
+        """Manual next/previous (delta +1 / -1)."""
+        if not self._play_order:
+            return
+        n = len(self._play_order)
+        pos = self._order_pos + delta
+        if pos >= n:
+            pos = 0 if self._repeat == "all" else n - 1
+        elif pos < 0:
+            pos = n - 1 if self._repeat == "all" else 0
+        self._order_pos = pos
+        self._load_and_play(self._song_paths[self._play_order[pos]])
+
+    def _auto_advance(self) -> None:
+        """Called when a track finishes — honours repeat one/all/off."""
+        if self._repeat == "one":
+            self.player.setPosition(0)
+            self.player.play()
+            return
+        if not self._play_order:
+            return
+        if self._order_pos + 1 >= len(self._play_order) and self._repeat != "all":
+            return  # end of queue, no repeat
+        self._advance(1)
+
+    def _on_song_clicked(self, item: QListWidgetItem) -> None:
+        row = self.song_list.row(item)
+        if 0 <= row < len(self._song_paths):
+            self.play_file(self._song_paths[row])
+
+    # -- shuffle / repeat / collapse / minimise ----------------------------
+    def _toggle_shuffle(self) -> None:
+        self._shuffle = not self._shuffle
+        self.settings.player_shuffle = self._shuffle
+        anchor = self._play_order[self._order_pos] if 0 <= self._order_pos < len(self._play_order) else None
+        self._rebuild_play_order(anchor)
+        self._sync_mode_buttons()
+
+    def _cycle_repeat(self) -> None:
+        self._repeat = _REPEAT_NEXT[self._repeat]
+        self.settings.player_repeat = self._repeat
+        self._sync_mode_buttons()
+
+    def _sync_mode_buttons(self) -> None:
+        self.shuffle_btn.setIcon(
+            theme.icon("fa5s.random", theme.ACCENT if self._shuffle else theme.TEXT))
+        self.shuffle_btn.setToolTip("Shuffle: on" if self._shuffle else "Shuffle: off")
+        colour = theme.ACCENT if self._repeat != "off" else theme.TEXT
+        self.repeat_btn.setIcon(theme.icon(_REPEAT_ICON[self._repeat], colour))
+        self.repeat_btn.setToolTip(_REPEAT_TIP[self._repeat])
+
+    def _toggle_lyrics(self) -> None:
+        show = self.lyrics_list.isHidden()
+        self.lyrics_list.setVisible(show)
+        self.lyrics_toggle.setText("  Collapse" if show else "  Expand")
+        self.lyrics_toggle.setIcon(
+            theme.icon("fa5s.chevron-up" if show else "fa5s.chevron-down", theme.TEXT))
+
+    def _toggle_minimise(self) -> None:
+        minimised = not self.now_panel.isHidden()
+        self.now_panel.setVisible(not minimised)
+        self.minimise_btn.setIcon(
+            theme.icon("fa5s.expand" if minimised else "fa5s.compress", theme.TEXT))
+        self.minimise_btn.setToolTip(
+            "Show now playing" if minimised else "Minimise now playing to browse other songs")
+
+    # -- load / lyrics / cover --------------------------------------------
+    def _load_and_play(self, path: str) -> None:
+        if not path or not os.path.exists(path):
+            return
+        if self.now_panel.isHidden():
             self._toggle_minimise()
         tags = metadata_mod.read_tags(path)
         stem = os.path.splitext(os.path.basename(path))[0]
@@ -225,38 +360,11 @@ class PlayerWidget(QWidget):
         self.player.setSource(QUrl.fromLocalFile(path))
         self.player.play()
 
-    def stop(self) -> None:
-        self.player.stop()
-
-    # -- song list ---------------------------------------------------------
-    def _on_song_clicked(self, item: QListWidgetItem) -> None:
-        row = self.song_list.row(item)
-        if 0 <= row < len(self._song_paths):
-            self.play_file(self._song_paths[row])
-
     def _select_song_in_list(self, path: str) -> None:
-        for row, p in enumerate(self._song_paths):
-            if os.path.normcase(p) == os.path.normcase(path):
-                self.song_list.setCurrentRow(row)
-                return
+        idx = self._index_of(path)
+        if idx is not None:
+            self.song_list.setCurrentRow(idx)
 
-    # -- collapse / minimise ----------------------------------------------
-    def _toggle_lyrics(self) -> None:
-        show = self.lyrics_list.isHidden()
-        self.lyrics_list.setVisible(show)
-        self.lyrics_toggle.setText("  Collapse" if show else "  Expand")
-        self.lyrics_toggle.setIcon(
-            theme.icon("fa5s.chevron-up" if show else "fa5s.chevron-down", theme.TEXT))
-
-    def _toggle_minimise(self) -> None:
-        minimised = not self.now_panel.isHidden()
-        self.now_panel.setVisible(not minimised)
-        self.minimise_btn.setIcon(
-            theme.icon("fa5s.expand" if minimised else "fa5s.compress", theme.TEXT))
-        self.minimise_btn.setToolTip(
-            "Show now playing" if minimised else "Minimise now playing to browse other songs")
-
-    # -- lyrics helpers ----------------------------------------------------
     def _reset_lyrics(self, message: str) -> None:
         self.lyrics_list.clear()
         item = QListWidgetItem(message)
@@ -285,7 +393,6 @@ class PlayerWidget(QWidget):
             self.lyrics_list.scrollToItem(cur, QAbstractItemView.PositionAtCenter)
         self._active = index
 
-    # -- cover helpers -----------------------------------------------------
     def _set_placeholder_cover(self) -> None:
         self.cover.setPixmap(theme.icon("fa5s.compact-disc", theme.TEXT_DIM).pixmap(72, 72))
 
@@ -340,6 +447,10 @@ class PlayerWidget(QWidget):
     def _on_state(self, state) -> None:
         playing = state == QMediaPlayer.PlayingState
         self.play_btn.setIcon(theme.icon("fa5s.pause" if playing else "fa5s.play", "white"))
+
+    def _on_media_status(self, status) -> None:
+        if status == QMediaPlayer.EndOfMedia:
+            self._auto_advance()
 
     def _on_error(self, error, message: str = "") -> None:
         if error != QMediaPlayer.NoError:

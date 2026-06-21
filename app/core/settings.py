@@ -21,6 +21,10 @@ KEY_FETCH_LYRICS = "features/lyrics"
 KEY_EMBED_METADATA = "features/metadata"
 KEY_CLIPBOARD = "features/clipboard"    # auto-detect links on the clipboard
 KEY_ARCHIVE = "features/archive"        # skip already-downloaded tracks
+KEY_PLAYER_SHUFFLE = "player/shuffle"   # player shuffle on/off
+KEY_PLAYER_REPEAT = "player/repeat"     # "off" | "all" | "one"
+
+REPEAT_MODES = ("off", "all", "one")
 
 DEFAULT_CONCURRENCY = 3
 BITRATES = ["128", "192", "256", "320"]
@@ -197,3 +201,21 @@ class AppSettings:
     @skip_existing.setter
     def skip_existing(self, value: bool) -> None:
         self._s.setValue(KEY_ARCHIVE, bool(value))
+
+    # --- player preferences ---
+    @property
+    def player_shuffle(self) -> bool:
+        return self._s.value(KEY_PLAYER_SHUFFLE, False, type=bool)
+
+    @player_shuffle.setter
+    def player_shuffle(self, value: bool) -> None:
+        self._s.setValue(KEY_PLAYER_SHUFFLE, bool(value))
+
+    @property
+    def player_repeat(self) -> str:
+        value = self._s.value(KEY_PLAYER_REPEAT, "off", type=str)
+        return value if value in REPEAT_MODES else "off"
+
+    @player_repeat.setter
+    def player_repeat(self, value: str) -> None:
+        self._s.setValue(KEY_PLAYER_REPEAT, value if value in REPEAT_MODES else "off")
