@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QThreadPool
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 from PySide6.QtGui import QAction, QGuiApplication, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,8 +27,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ..core import appupdate, resolvers, updater
 from ..core import history as history_mod
-from ..core import resolvers, updater
 from ..core.downloader import DownloadOptions
 from ..core.naming import TEMPLATE_HELP
 from ..core.paths import icon_path
@@ -43,11 +43,60 @@ from ..core.settings import (
     archive_path,
 )
 from . import theme
+from .flow_layout import FlowLayout
 from .history_widget import HistoryWidget
 from .library_widget import LibraryWidget
 from .player_widget import PlayerWidget
 from .queue_widget import QueueWidget
 from .search_widget import SearchWidget
+
+
+class _UpdateCheckSignals(QObject):
+    result = Signal(object)   # update dict, or None if up to date
+    error = Signal(str)
+
+
+class _UpdateCheckWorker(QRunnable):
+    """Checks GitHub for a newer Songtify release off the UI thread."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.signals = _UpdateCheckSignals()
+
+    def run(self) -> None:
+        try:
+            latest = appupdate.check_latest()
+        except Exception as exc:
+            self.signals.error.emit(str(exc))
+            return
+        if (latest and latest.get("asset")
+                and appupdate.is_newer(latest["version"], appupdate.current_version())):
+            self.signals.result.emit(latest)
+        else:
+            self.signals.result.emit(None)
+
+
+class _UpdateDownloadSignals(QObject):
+    progress = Signal(int)
+    done = Signal(str)
+    error = Signal(str)
+
+
+class _UpdateDownloadWorker(QRunnable):
+    """Downloads the new executable off the UI thread."""
+
+    def __init__(self, url: str) -> None:
+        super().__init__()
+        self.url = url
+        self.signals = _UpdateDownloadSignals()
+
+    def run(self) -> None:
+        try:
+            path = appupdate.download(self.url, progress=self.signals.progress.emit)
+        except Exception as exc:
+            self.signals.error.emit(str(exc))
+            return
+        self.signals.done.emit(path)
 
 
 class MainWindow(QWidget):
@@ -106,8 +155,10 @@ class MainWindow(QWidget):
         self._wire_queue()
         self._setup_clipboard()
         self._setup_tray()
+        self._pending_update = None
         self._select_nav(0)
         self.queue.load_state()
+        self._startup_update_check()
 
     # -- sidebar -----------------------------------------------------------
     def _build_sidebar(self) -> QWidget:
@@ -180,52 +231,58 @@ class MainWindow(QWidget):
         sub.setStyleSheet(f"color: {theme.TEXT_DIM};")
         lay.addWidget(sub)
 
-        # -- Format / quality / codec card (top, single row) --
+        # -- Format / quality / codec card (chips that reflow on resize) --
         fmt_card = QFrame()
         fmt_card.setObjectName("card")
-        fc = QHBoxLayout(fmt_card)
-        fc.setContentsMargins(22, 16, 22, 16)
-        fc.setSpacing(8)
+        self._fmt_flow = FlowLayout(fmt_card, margin=18, hspacing=10, vspacing=10)
 
-        fc.addWidget(self._label("Preset"))
+        # Preset
         self.preset_combo = QComboBox()
+        self.preset_combo.setMinimumContentsLength(14)
         for label, _ in self._PRESETS:
             self.preset_combo.addItem(label)
         self.preset_combo.currentIndexChanged.connect(self._apply_preset)
-        fc.addWidget(self.preset_combo)
-        fc.addSpacing(14)
+        self._fmt_flow.addWidget(self._chip("Preset", self.preset_combo))
 
-        fc.addWidget(self._label("Format"))
+        # Format toggle (audio / video) as its own chip
         self.seg_group = QButtonGroup(self)
         self.audio_btn = QPushButton("  Audio")
         self.audio_btn.setObjectName("segment")
         self.audio_btn.setIcon(theme.icon("fa5s.music", theme.TEXT))
-        self.video_btn = QPushButton("  Video (MP4)")
+        self.video_btn = QPushButton("  Video")
         self.video_btn.setObjectName("segment")
         self.video_btn.setIcon(theme.icon("fa5s.film", theme.TEXT))
+        seg_box = QWidget()
+        seg_inner = QHBoxLayout(seg_box)
+        seg_inner.setContentsMargins(0, 0, 0, 0)
+        seg_inner.setSpacing(6)
         for b in (self.audio_btn, self.video_btn):
             b.setCheckable(True)
+            b.setMinimumWidth(96)
             self.seg_group.addButton(b)
-            fc.addWidget(b)
+            seg_inner.addWidget(b)
         self.audio_btn.toggled.connect(self._on_format_toggled)
+        self._fmt_flow.addWidget(self._chip("Format", seg_box))
 
-        fc.addSpacing(14)
-        self.bitrate_label = self._label("Bitrate")
+        # Bitrate / codec (audio) and resolution (video) as separate chips so
+        # they can be shown/hidden and wrapped independently.
         self.bitrate_combo = QComboBox()
         self.bitrate_combo.addItems(BITRATES)
-        self.codec_label = self._label("Codec")
+        self.bitrate_chip = self._chip("Bitrate", self.bitrate_combo)
+        self._fmt_flow.addWidget(self.bitrate_chip)
+
         self.codec_combo = QComboBox()
         for codec in CODECS:
             self.codec_combo.addItem(codec.upper(), codec)
-        self.resolution_label = self._label("Resolution")
+        self.codec_chip = self._chip("Codec", self.codec_combo)
+        self._fmt_flow.addWidget(self.codec_chip)
+
         self.resolution_combo = QComboBox()
         self.resolution_combo.addItems(RESOLUTIONS)
-        for w_ in (self.bitrate_label, self.bitrate_combo, self.codec_label,
-                   self.codec_combo, self.resolution_label, self.resolution_combo):
-            fc.addWidget(w_)
-        self.resolution_label.setVisible(False)
-        self.resolution_combo.setVisible(False)
-        fc.addStretch(1)
+        self.resolution_chip = self._chip("Resolution", self.resolution_combo)
+        self.resolution_chip.setVisible(False)
+        self._fmt_flow.addWidget(self.resolution_chip)
+
         lay.addWidget(fmt_card)
 
         # Manual control changes drop the preset back to "Custom".
@@ -243,7 +300,7 @@ class MainWindow(QWidget):
         sc.addWidget(self._label("Search"))
         s_row = QHBoxLayout()
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search by song or artist…")
+        self.search_input.setPlaceholderText("Search for a song, artist, movie or video…")
         self.search_input.returnPressed.connect(self._do_search)
         s_row.addWidget(self.search_input, 1)
         search_btn = QPushButton("  Search")
@@ -333,12 +390,25 @@ class MainWindow(QWidget):
             self.preset_combo.setCurrentIndex(0)
 
     def _on_format_toggled(self, audio_on: bool) -> None:
-        for w_ in (self.bitrate_label, self.bitrate_combo, self.codec_label, self.codec_combo):
-            w_.setVisible(audio_on)
-        self.resolution_label.setVisible(not audio_on)
-        self.resolution_combo.setVisible(not audio_on)
+        self.bitrate_chip.setVisible(audio_on)
+        self.codec_chip.setVisible(audio_on)
+        self.resolution_chip.setVisible(not audio_on)
+        self._fmt_flow.invalidate()   # reflow now that visible chips changed
         # Reflect the destination for the chosen format.
         self.folder_input.setText(self.settings.folder_for("audio" if audio_on else "video"))
+
+    def _chip(self, label: str, control: QWidget) -> QFrame:
+        """A rounded 'chip' grouping a dim label with its control."""
+        chip = QFrame()
+        chip.setObjectName("chip")
+        lay = QHBoxLayout(chip)
+        lay.setContentsMargins(12, 6, 12, 6)
+        lay.setSpacing(8)
+        lbl = QLabel(label)
+        lbl.setObjectName("chipLabel")
+        lay.addWidget(lbl)
+        lay.addWidget(control)
+        return chip
 
     # -- queue page --------------------------------------------------------
     def _build_queue_page(self) -> QWidget:
@@ -719,6 +789,18 @@ class MainWindow(QWidget):
         u_row.addWidget(self.update_status, 1)
         c.addLayout(u_row)
 
+        # Songtify app updates (GitHub Releases)
+        c.addWidget(self._label("Songtify updates"))
+        a_row = QHBoxLayout()
+        self.app_update_btn = QPushButton("  Check for updates")
+        self.app_update_btn.setIcon(theme.icon("fa5s.cloud-download-alt", theme.TEXT))
+        self.app_update_btn.clicked.connect(self._check_app_update)
+        a_row.addWidget(self.app_update_btn)
+        self.app_update_status = QLabel(f"Songtify {appupdate.current_version()}")
+        self.app_update_status.setStyleSheet(f"color: {theme.TEXT_DIM};")
+        a_row.addWidget(self.app_update_status, 1)
+        c.addLayout(a_row)
+
         lay.addWidget(card)
         lay.addStretch(1)
         return page
@@ -742,6 +824,79 @@ class MainWindow(QWidget):
         self.update_btn.setEnabled(True)
         self.update_status.setText(message)
         self._log(message)
+
+    # -- app self-update ---------------------------------------------------
+    def _check_app_update(self) -> None:
+        self.app_update_btn.setEnabled(False)
+        self.app_update_status.setText("Checking for updates…")
+        worker = _UpdateCheckWorker()
+        worker.signals.result.connect(self._on_app_update_result)
+        worker.signals.error.connect(self._on_app_update_error)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_app_update_result(self, latest) -> None:
+        self.app_update_btn.setEnabled(True)
+        if not latest:
+            self.app_update_status.setText(
+                f"You're on the latest version (Songtify {appupdate.current_version()}).")
+            return
+        version = latest["version"]
+        self._pending_update = latest
+        self.app_update_status.setText(f"Update available: Songtify {version}")
+        if not appupdate.is_frozen():
+            self.app_update_status.setText(
+                f"Songtify {version} is available — update via git (running from source).")
+            return
+        self.app_update_btn.setText(f"  Download & install {version}")
+        self.app_update_btn.setIcon(theme.icon("fa5s.download", theme.TEXT))
+        try:
+            self.app_update_btn.clicked.disconnect()
+        except RuntimeError:
+            pass
+        self.app_update_btn.clicked.connect(self._download_app_update)
+
+    def _on_app_update_error(self, message: str) -> None:
+        self.app_update_btn.setEnabled(True)
+        self.app_update_status.setText(f"Update check failed: {message}")
+
+    def _download_app_update(self) -> None:
+        latest = getattr(self, "_pending_update", None)
+        if not latest or not latest.get("asset"):
+            return
+        self.app_update_btn.setEnabled(False)
+        self.app_update_status.setText("Downloading update… 0%")
+        worker = _UpdateDownloadWorker(latest["asset"])
+        worker.signals.progress.connect(
+            lambda pct: self.app_update_status.setText(f"Downloading update… {pct}%"))
+        worker.signals.done.connect(self._on_app_update_downloaded)
+        worker.signals.error.connect(self._on_app_update_error)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_app_update_downloaded(self, path: str) -> None:
+        self.app_update_status.setText("Installing — Songtify will restart…")
+        if appupdate.apply_update(path):
+            QApplication.quit()
+        else:
+            self.app_update_status.setText("Could not install the update automatically.")
+            self.app_update_btn.setEnabled(True)
+
+    def _startup_update_check(self) -> None:
+        """Quiet check at launch; only surfaces if a newer version exists."""
+        worker = _UpdateCheckWorker()
+        worker.signals.result.connect(self._on_startup_update)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_startup_update(self, latest) -> None:
+        if not latest:
+            return
+        version = latest["version"]
+        self._pending_update = latest
+        self._log(f"Update available: Songtify {version} (Settings → Check for updates).")
+        if self._tray:
+            self._tray.showMessage(
+                "Songtify update available",
+                f"Version {version} is ready to install (Settings → Check for updates).",
+                QSystemTrayIcon.Information, 6000)
 
     # -- helpers -----------------------------------------------------------
     def _label(self, text: str) -> QLabel:

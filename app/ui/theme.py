@@ -112,6 +112,20 @@ QPushButton:disabled {{ color: {TEXT_DIM}; background: {BG_ALT}; }}
 QPushButton#segment {{ border-radius: 8px; padding: 9px 18px; }}
 QPushButton#segment:checked {{ background: {ACCENT}; border: none; color: white; font-weight: 600; }}
 
+/* Labeled "chips" on the Download page (reflow with the window) */
+QFrame#chip {{
+    background: {BG_ALT};
+    border: 1px solid {BORDER};
+    border-radius: 10px;
+}}
+QLabel#chipLabel {{ color: {TEXT_DIM}; font-weight: 600; }}
+QFrame#chip QComboBox {{
+    background: transparent;
+    border: none;
+    padding: 4px 4px;
+}}
+QFrame#chip QComboBox:focus {{ border: none; }}
+
 /* Cards / queue rows */
 QFrame#card {{
     background: {CARD};
