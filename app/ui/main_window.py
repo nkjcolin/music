@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 from PySide6.QtGui import QAction, QGuiApplication, QIcon
@@ -46,6 +47,7 @@ from . import theme
 from .flow_layout import FlowLayout
 from .history_widget import HistoryWidget
 from .library_widget import LibraryWidget
+from .media_keys import MediaKeys
 from .player_widget import PlayerWidget
 from .queue_widget import QueueWidget
 from .search_widget import SearchWidget
@@ -155,6 +157,7 @@ class MainWindow(QWidget):
         self._wire_queue()
         self._setup_clipboard()
         self._setup_tray()
+        self._setup_media_keys()
         self._pending_update = None
         self._select_nav(0)
         self.queue.load_state()
@@ -556,6 +559,22 @@ class MainWindow(QWidget):
     def _on_tray_activated(self, reason) -> None:
         if reason == QSystemTrayIcon.Trigger:
             self._show_from_tray()
+
+    # -- global media keys -------------------------------------------------
+    def _setup_media_keys(self) -> None:
+        """Register system-wide media keys to control the in-app player."""
+        self._media_keys = None
+        if sys.platform != "win32":
+            return
+        keys = MediaKeys(self)
+        keys.play_pause.connect(self.player_page.toggle_play)
+        keys.next_track.connect(self.player_page.play_next)
+        keys.prev_track.connect(self.player_page.play_prev)
+        keys.stop.connect(self.player_page.stop)
+        QApplication.instance().installNativeEventFilter(keys)
+        if keys.register(int(self.winId())):
+            self._log("Global media keys enabled (play/pause, next, previous, stop).")
+        self._media_keys = keys
 
     def _show_from_tray(self) -> None:
         self.showNormal()
@@ -1060,4 +1079,6 @@ class MainWindow(QWidget):
     def closeEvent(self, event) -> None:
         # Persist the queue so unfinished items return on next launch.
         self.queue.save()
+        if self._media_keys:
+            self._media_keys.unregister()
         super().closeEvent(event)
