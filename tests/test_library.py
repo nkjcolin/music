@@ -16,6 +16,15 @@ def test_delete_media_removes_file_and_lyrics(tmp_path):
     assert not (lyr_dir / "Song.lrc").exists()
 
 
+def test_list_media_includes_all_audio_formats(tmp_path):
+    for name in ("a.mp3", "b.flac", "c.opus", "d.wav", "e.ogg", "f.m4a",
+                 "g.mp4", "skip.txt", "skip.lrc"):
+        (tmp_path / name).write_text("x")
+    exts = {i["ext"].lower() for i in library.list_media(str(tmp_path))}
+    assert {".mp3", ".flac", ".opus", ".wav", ".ogg", ".m4a", ".mp4"} <= exts
+    assert ".txt" not in exts and ".lrc" not in exts
+
+
 def test_delete_media_without_lyrics(tmp_path):
     media = tmp_path / "Song.mp3"
     media.write_text("x")

@@ -8,7 +8,12 @@ import time
 from . import lrc as lrc_mod
 from .naming import sanitize_filename
 
-MEDIA_EXTS = (".mp3", ".mp4", ".m4a", ".m4v")
+# All formats the app can produce (audio codecs + video), so the Library and
+# Player list everything that was downloaded — not just MP3/MP4.
+MEDIA_EXTS = (
+    ".mp3", ".m4a", ".opus", ".flac", ".wav", ".ogg",   # audio
+    ".mp4", ".m4v", ".mkv", ".webm",                      # video
+)
 
 
 def list_media(folder: str) -> list[dict]:
