@@ -7,7 +7,14 @@ import random
 
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, QUrl, Signal
 from PySide6.QtGui import QPixmap
-from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+
+try:
+    from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
+    MULTIMEDIA_AVAILABLE = True
+except Exception:  # QtMultimedia missing/unbundled — keep the rest of the app working
+    QAudioOutput = QMediaPlayer = None
+    MULTIMEDIA_AVAILABLE = False
+
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
@@ -72,6 +79,16 @@ class PlayerWidget(QWidget):
         super().__init__()
         self.settings = settings
         self._current_path = ""
+        self.available = MULTIMEDIA_AVAILABLE
+        if not self.available:
+            # No audio backend in this build — show a notice, keep the app usable.
+            lay = QVBoxLayout(self)
+            msg = QLabel("In-app playback isn't available in this build.\n"
+                         "Downloading, the library and everything else still work.")
+            msg.setAlignment(Qt.AlignCenter)
+            msg.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 14px;")
+            lay.addWidget(msg)
+            return
         self.player = QMediaPlayer(self)
         self.audio = QAudioOutput(self)
         self.player.setAudioOutput(self.audio)
@@ -244,6 +261,8 @@ class PlayerWidget(QWidget):
     # -- public ------------------------------------------------------------
     def refresh_songs(self) -> None:
         """Rescan the music folder and rebuild the song list + play order."""
+        if not self.available:
+            return
         current = self.player.source().toLocalFile() if self.player.source().isValid() else ""
         self.song_list.clear()
         self._song_paths = []
@@ -263,7 +282,7 @@ class PlayerWidget(QWidget):
 
     def play_file(self, path: str) -> None:
         """Play a specific file, syncing the queue position to it."""
-        if not path or not os.path.exists(path):
+        if not self.available or not path or not os.path.exists(path):
             return
         idx = self._index_of(path)
         if idx is None:
@@ -276,7 +295,8 @@ class PlayerWidget(QWidget):
         self._load_and_play(path)
 
     def stop(self) -> None:
-        self.player.stop()
+        if self.available:
+            self.player.stop()
 
     # -- queue order -------------------------------------------------------
     def _index_of(self, path: str) -> int | None:
@@ -493,13 +513,16 @@ class PlayerWidget(QWidget):
 
     # -- public controls (for the mini-player bar) -------------------------
     def toggle_play(self) -> None:
-        self._toggle_play()
+        if self.available:
+            self._toggle_play()
 
     def play_next(self) -> None:
-        self._advance(1)
+        if self.available:
+            self._advance(1)
 
     def play_prev(self) -> None:
-        self._advance(-1)
+        if self.available:
+            self._advance(-1)
 
     # -- fetch lyrics on demand -------------------------------------------
     def _find_lyrics(self) -> None:

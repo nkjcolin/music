@@ -66,7 +66,12 @@ def _download_target() -> str:
 
 
 def download(url: str, progress=None) -> str:
-    """Stream the new executable to a temp file. ``progress`` gets 0-100 ints."""
+    """Stream the new executable to a temp file, then verify it.
+
+    A truncated/corrupt download could brick the install if swapped in, so the
+    file is validated (full length + valid ``MZ`` executable header) before it
+    is returned. Raises on a bad download.
+    """
     dest = _download_target()
     with requests.get(url, stream=True, timeout=_TIMEOUT) as resp:
         resp.raise_for_status()
@@ -80,6 +85,19 @@ def download(url: str, progress=None) -> str:
                 done += len(chunk)
                 if total and progress:
                     progress(int(done / total * 100))
+
+    size = os.path.getsize(dest)
+    if total and size != total:
+        os.remove(dest)
+        raise OSError(f"incomplete download ({size} of {total} bytes)")
+    if size < 1_000_000:
+        os.remove(dest)
+        raise OSError("downloaded file is too small to be valid")
+    with open(dest, "rb") as fh:
+        header = fh.read(2)
+    if header != b"MZ":
+        os.remove(dest)   # file is closed now — safe to delete on Windows
+        raise OSError("downloaded file is not a valid Windows executable")
     return dest
 
 

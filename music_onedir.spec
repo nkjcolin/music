@@ -8,7 +8,9 @@ from PyInstaller.utils.hooks import collect_submodules
 hiddenimports = (
     collect_submodules('yt_dlp')
     + collect_submodules('syncedlyrics')
-    + ['mutagen', 'qtawesome', 'PIL']
+    + ['mutagen', 'qtawesome', 'PIL',
+       # Explicit so the audio player module is always bundled.
+       'PySide6.QtMultimedia', 'PySide6.QtNetwork']
 )
 
 a = Analysis(
