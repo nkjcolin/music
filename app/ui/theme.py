@@ -112,6 +112,19 @@ QPushButton:disabled {{ color: {TEXT_DIM}; background: {BG_ALT}; }}
 QPushButton#segment {{ border-radius: 8px; padding: 9px 18px; }}
 QPushButton#segment:checked {{ background: {ACCENT}; border: none; color: white; font-weight: 600; }}
 
+/* Inline option pills (bitrate / codec / resolution) — all choices visible */
+QPushButton#segOption {{
+    background: {CARD};
+    border: 1px solid {BORDER};
+    border-radius: 7px;
+    padding: 5px 12px;
+    color: {TEXT};
+}}
+QPushButton#segOption:hover {{ border: 1px solid {ACCENT}; }}
+QPushButton#segOption:checked {{
+    background: {ACCENT}; border: 1px solid {ACCENT}; color: white; font-weight: 600;
+}}
+
 /* Labeled "chips" on the Download page (reflow with the window) */
 QFrame#chip {{
     background: {BG_ALT};

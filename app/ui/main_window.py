@@ -51,6 +51,7 @@ from .media_keys import MediaKeys
 from .player_widget import PlayerWidget
 from .queue_widget import QueueWidget
 from .search_widget import SearchWidget
+from .segmented import SegmentedSelector
 
 
 class _UpdateCheckSignals(QObject):
@@ -270,32 +271,27 @@ class MainWindow(QWidget):
 
         # Bitrate / codec (audio) and resolution (video) as separate chips so
         # they can be shown/hidden and wrapped independently.
-        self.bitrate_combo = QComboBox()
-        self.bitrate_combo.addItems(BITRATES)
-        self._size_combo(self.bitrate_combo)
-        self.bitrate_chip = self._chip("Bitrate", self.bitrate_combo)
+        # Bitrate / codec / resolution shown as visible option pills (not
+        # dropdowns) so every choice is obvious at a glance.
+        self.bitrate_sel = SegmentedSelector([(b, b) for b in BITRATES])
+        self.bitrate_chip = self._chip("Bitrate", self.bitrate_sel)
         self._fmt_flow.addWidget(self.bitrate_chip)
 
-        self.codec_combo = QComboBox()
-        for codec in CODECS:
-            self.codec_combo.addItem(codec.upper(), codec)
-        self._size_combo(self.codec_combo)
-        self.codec_chip = self._chip("Codec", self.codec_combo)
+        self.codec_sel = SegmentedSelector([(c.upper(), c) for c in CODECS])
+        self.codec_chip = self._chip("Codec", self.codec_sel)
         self._fmt_flow.addWidget(self.codec_chip)
 
-        self.resolution_combo = QComboBox()
-        self.resolution_combo.addItems(RESOLUTIONS)
-        self._size_combo(self.resolution_combo)
-        self.resolution_chip = self._chip("Resolution", self.resolution_combo)
+        self.resolution_sel = SegmentedSelector([(r, r) for r in RESOLUTIONS])
+        self.resolution_chip = self._chip("Resolution", self.resolution_sel)
         self.resolution_chip.setVisible(False)
         self._fmt_flow.addWidget(self.resolution_chip)
 
         lay.addWidget(fmt_card)
 
         # Manual control changes drop the preset back to "Custom".
-        self.bitrate_combo.currentIndexChanged.connect(self._mark_custom_preset)
-        self.codec_combo.currentIndexChanged.connect(self._mark_custom_preset)
-        self.resolution_combo.currentIndexChanged.connect(self._mark_custom_preset)
+        self.bitrate_sel.changed.connect(self._mark_custom_preset)
+        self.codec_sel.changed.connect(self._mark_custom_preset)
+        self.resolution_sel.changed.connect(self._mark_custom_preset)
         self.audio_btn.toggled.connect(self._mark_custom_preset)
 
         # -- Search card --
@@ -363,11 +359,9 @@ class MainWindow(QWidget):
         else:
             self.audio_btn.setChecked(True)
         self._on_format_toggled(self.audio_btn.isChecked())
-        self.bitrate_combo.setCurrentText(self.settings.bitrate)
-        self.resolution_combo.setCurrentText(self.settings.resolution)
-        idx = self.codec_combo.findData(self.settings.codec)
-        if idx >= 0:
-            self.codec_combo.setCurrentIndex(idx)
+        self.bitrate_sel.set_current_data(self.settings.bitrate)
+        self.resolution_sel.set_current_data(self.settings.resolution)
+        self.codec_sel.set_current_data(self.settings.codec)
         return page
 
     def _apply_preset(self, idx: int) -> None:
@@ -380,13 +374,11 @@ class MainWindow(QWidget):
         self._applying_preset = True
         (self.audio_btn if fmt == "audio" else self.video_btn).setChecked(True)
         if codec:
-            ci = self.codec_combo.findData(codec)
-            if ci >= 0:
-                self.codec_combo.setCurrentIndex(ci)
+            self.codec_sel.set_current_data(codec)
         if bitrate:
-            self.bitrate_combo.setCurrentText(bitrate)
+            self.bitrate_sel.set_current_data(bitrate)
         if res:
-            self.resolution_combo.setCurrentText(res)
+            self.resolution_sel.set_current_data(res)
         self._applying_preset = False
 
     def _mark_custom_preset(self, *_args) -> None:
@@ -969,9 +961,9 @@ class MainWindow(QWidget):
 
     def _persist_format_choices(self) -> None:
         self.settings.format = "audio" if self.audio_btn.isChecked() else "video"
-        self.settings.bitrate = self.bitrate_combo.currentText()
-        self.settings.resolution = self.resolution_combo.currentText()
-        self.settings.codec = self.codec_combo.currentData() or "mp3"
+        self.settings.bitrate = self.bitrate_sel.current_data()
+        self.settings.resolution = self.resolution_sel.current_data()
+        self.settings.codec = self.codec_sel.current_data() or "mp3"
 
     def _current_options(self) -> DownloadOptions:
         audio = self.audio_btn.isChecked()
@@ -979,9 +971,9 @@ class MainWindow(QWidget):
         return DownloadOptions(
             folder=self.settings.folder_for(fmt),
             fmt=fmt,
-            bitrate=self.bitrate_combo.currentText(),
-            resolution=self.resolution_combo.currentText(),
-            codec=self.codec_combo.currentData() or "mp3",
+            bitrate=self.bitrate_sel.current_data(),
+            resolution=self.resolution_sel.current_data(),
+            codec=self.codec_sel.current_data() or "mp3",
             template=self.settings.template,
             ratelimit_kbps=self.settings.ratelimit,
             use_archive=self.settings.skip_existing,
