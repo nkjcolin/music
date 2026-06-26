@@ -18,6 +18,15 @@ def test_plain_link_is_not_streaming():
     assert resolvers.resolve("https://youtu.be/x") is None
 
 
+def test_collapse_duplicate_url():
+    u = "https://www.youtube.com/watch?v=abc"
+    assert resolvers.collapse_duplicate_url(u + u) == u   # doubled -> single
+    assert resolvers.collapse_duplicate_url(u) == u       # single untouched
+    # distinct concatenation is left alone (we only collapse exact duplicates)
+    two = "https://x/a" + "https://x/b"
+    assert resolvers.collapse_duplicate_url(two) == two
+
+
 def test_spotify_entity_playlist():
     title, tracks = resolvers._spotify_tracks_from_entity({
         "name": "My Playlist",

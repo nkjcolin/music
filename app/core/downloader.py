@@ -121,7 +121,7 @@ class DownloadWorker(QRunnable):
         elif d.get("status") == "finished":
             self.signals.status.emit(self.item.id, "Processing")
 
-    def _build_opts(self, outtmpl: str, use_cookies: bool = True) -> dict:
+    def _build_opts(self, outtmpl: str, use_cookies: bool = True, use_subs: bool = True) -> dict:
         o = self.item.options
         opts: dict = {
             "outtmpl": outtmpl,
@@ -164,10 +164,12 @@ class DownloadWorker(QRunnable):
             # Safety net: bias selection toward h264/aac if the string falls through.
             opts["format_sort"] = ["vcodec:h264", "acodec:aac"]
             opts["merge_output_format"] = "mp4"
-            if o.embed_subs:
+            if use_subs and o.embed_subs:
                 opts["writesubtitles"] = True
                 opts["writeautomaticsub"] = True
-                opts["subtitleslangs"] = ["en.*", "en"]
+                # Specific English variants only — a broad "en.*" pulls many
+                # auto-translated tracks (en-nl, …) and trips HTTP 429.
+                opts["subtitleslangs"] = ["en", "en-US", "en-GB", "en-orig"]
                 pps.append({"key": "FFmpegEmbedSubtitle"})
             if o.embed_chapters:
                 pps.append({"key": "FFmpegMetadata", "add_chapters": True})
@@ -269,9 +271,13 @@ class DownloadWorker(QRunnable):
         msg = str(exc).lower()
         return "cookie" in msg or "could not copy" in msg or "unable to open" in msg
 
-    def _extract(self, outtmpl: str, archive, name: str, use_cookies: bool):
+    @staticmethod
+    def _is_subtitle_error(exc: Exception) -> bool:
+        return "subtitle" in str(exc).lower()
+
+    def _extract(self, outtmpl: str, archive, name: str, use_cookies: bool, use_subs: bool):
         """Probe (for dedup) and download. Returns ('skip', path) or ('ok', info, final)."""
-        opts = self._build_opts(outtmpl, use_cookies=use_cookies)
+        opts = self._build_opts(outtmpl, use_cookies=use_cookies, use_subs=use_subs)
         with yt_dlp.YoutubeDL(opts) as ydl:
             probe = None
             if archive is not None:
@@ -306,16 +312,27 @@ class DownloadWorker(QRunnable):
         archive = Archive(o.archive_path) if (o.use_archive and o.archive_path) else None
 
         try:
-            try:
-                result = self._extract(outtmpl, archive, name, use_cookies=True)
-            except _Cancelled:
-                raise
-            except Exception as exc:
-                # A bad cookie source must never block a download — retry clean.
-                if o.cookies_browser and self._is_cookie_error(exc):
-                    self.signals.log.emit(f"[{name}] cookies unavailable, retrying without them…")
-                    result = self._extract(outtmpl, archive, name, use_cookies=False)
-                else:
+            # Try the full download, then degrade gracefully: a bad cookie
+            # source or a rate-limited (HTTP 429) subtitle fetch must never block
+            # the actual media — drop that feature and retry.
+            use_cookies = True
+            use_subs = bool(o.embed_subs)
+            while True:
+                try:
+                    result = self._extract(outtmpl, archive, name, use_cookies, use_subs)
+                    break
+                except _Cancelled:
+                    raise
+                except Exception as exc:
+                    if use_cookies and o.cookies_browser and self._is_cookie_error(exc):
+                        use_cookies = False
+                        self.signals.log.emit(f"[{name}] cookies unavailable, retrying without them…")
+                        continue
+                    if use_subs and self._is_subtitle_error(exc):
+                        use_subs = False
+                        self.signals.log.emit(
+                            f"[{name}] subtitles unavailable (rate-limited), retrying without them…")
+                        continue
                     raise
 
             if result[0] == "skip":

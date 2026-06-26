@@ -114,7 +114,7 @@ class QueueManager(QObject):
     # -- adding ------------------------------------------------------------
     def add_url(self, url: str, options: DownloadOptions) -> None:
         """Resolve a link (streaming/playlist/single) and queue its tracks."""
-        url = url.strip()
+        url = resolvers.collapse_duplicate_url(url)
         if not url:
             return
         self.log.emit(f"Resolving: {url}")

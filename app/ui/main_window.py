@@ -1035,6 +1035,8 @@ class MainWindow(QWidget):
         self._last_clip = url
         if not self.url_input.text().strip():
             self.url_input.setText(url)
+            # Select it so a habitual Ctrl+V replaces rather than appends.
+            self.url_input.selectAll()
         self._log(f"Clipboard link detected — ready on the Download page: {url}")
         self._select_nav(0)
 

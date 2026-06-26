@@ -56,6 +56,19 @@ def looks_like_url(text: str) -> bool:
     return find_first_url(text) is not None
 
 
+def collapse_duplicate_url(text: str) -> str:
+    """Collapse an accidentally doubled URL (e.g. clipboard fill + manual paste).
+
+    ``https://x/abchttps://x/abc`` -> ``https://x/abc``. Only trims when the two
+    halves are identical, so distinct concatenations are left untouched.
+    """
+    text = (text or "").strip()
+    m = re.match(r"(https?://.+?)(https?://.+)$", text)
+    if m and m.group(2) == m.group(1):
+        return m.group(1)
+    return text
+
+
 def is_streaming_url(url: str) -> bool:
     return bool(_SPOTIFY_RE.search(url) or _DEEZER_RE.search(url) or _APPLE_RE.search(url))
 
