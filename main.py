@@ -9,6 +9,7 @@ import sys
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from app.core import appupdate
 from app.core.logsetup import setup_logging
 from app.core.paths import icon_path
 from app.core.settings import APP, ORG
@@ -18,6 +19,7 @@ from app.ui.theme import STYLESHEET
 
 def main() -> int:
     setup_logging()
+    appupdate.cleanup_old()   # remove the previous exe after a self-update
     app = QApplication(sys.argv)
     app.setOrganizationName(ORG)
     app.setApplicationName(APP)

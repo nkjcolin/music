@@ -83,33 +83,55 @@ def download(url: str, progress=None) -> str:
     return dest
 
 
-def apply_update(new_exe_path: str) -> bool:
-    """Swap in the downloaded exe and relaunch via a detached batch script.
+_DETACHED_PROCESS = 0x00000008
 
-    Returns True if the swap was launched (the caller should then quit the app).
-    Only works for a frozen build.
+
+def apply_update(new_exe_path: str) -> bool:
+    """Swap in the downloaded exe and relaunch — no shell, no console windows.
+
+    Windows lets you *rename* a running executable (just not overwrite/delete
+    it), so we move the current exe aside, drop the new build into its place,
+    and relaunch it. The leftover ``.old`` file is removed on the next start by
+    :func:`cleanup_old`. Returns True if the swap succeeded (caller then quits).
+    Only applies to a frozen build.
     """
     if not is_frozen():
         return False
     current = sys.executable
-    bat = os.path.join(tempfile.gettempdir(), "songtify_update.bat")
-    script = (
-        "@echo off\r\n"
-        "ping 127.0.0.1 -n 3 >nul\r\n"
-        ":retry\r\n"
-        f'move /y "{new_exe_path}" "{current}" >nul 2>&1\r\n'
-        "if errorlevel 1 (\r\n"
-        "  ping 127.0.0.1 -n 2 >nul\r\n"
-        "  goto retry\r\n"
-        ")\r\n"
-        f'start "" "{current}"\r\n'
-        'del "%~f0"\r\n'
-    )
+    backup = current + ".old"
+
+    if os.path.exists(backup):
+        try:
+            os.remove(backup)
+        except OSError:
+            pass  # still locked from a previous run; harmless
+
     try:
-        with open(bat, "w", encoding="ascii") as fh:
-            fh.write(script)
-        creationflags = 0x00000008 | 0x00000200  # DETACHED_PROCESS | NEW_PROCESS_GROUP
-        subprocess.Popen(["cmd", "/c", bat], creationflags=creationflags, close_fds=True)
-        return True
-    except Exception:
+        os.replace(current, backup)        # rename the running exe out of the way
+        os.replace(new_exe_path, current)  # put the new build at the original path
+    except OSError:
+        # Roll back if we moved the original but couldn't place the new one.
+        if not os.path.exists(current) and os.path.exists(backup):
+            try:
+                os.replace(backup, current)
+            except OSError:
+                pass
         return False
+
+    try:
+        subprocess.Popen([current], creationflags=_DETACHED_PROCESS, close_fds=True)
+    except Exception:
+        pass  # already swapped; the user can relaunch manually if needed
+    return True
+
+
+def cleanup_old() -> None:
+    """Delete the previous executable left behind by a completed update."""
+    if not is_frozen():
+        return
+    backup = sys.executable + ".old"
+    if os.path.exists(backup):
+        try:
+            os.remove(backup)
+        except OSError:
+            pass  # may still be locked right after relaunch; next start clears it
