@@ -1,3 +1,5 @@
+import pytest
+
 from app.core import appupdate
 
 
@@ -55,9 +57,6 @@ def test_download_rejects_non_executable(tmp_path, monkeypatch):
 
     monkeypatch.setattr(appupdate, "_download_target", lambda: str(tmp_path / "Songtify.update.exe"))
     monkeypatch.setattr(requests, "get", lambda *a, **k: _Resp())
-    try:
+    with pytest.raises(OSError):
         appupdate.download("http://x/Songtify.exe")
-        assert False, "should have rejected a non-exe download"
-    except OSError:
-        pass
     assert not (tmp_path / "Songtify.update.exe").exists()  # bad file cleaned up
