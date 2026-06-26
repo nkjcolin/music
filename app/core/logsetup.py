@@ -33,7 +33,10 @@ def setup_logging() -> None:
 
     def _excepthook(exc_type, exc, tb):
         _LOG.error("Uncaught exception", exc_info=(exc_type, exc, tb))
-        sys.__excepthook__(exc_type, exc, tb)
+        # In a frozen build, writing to stderr triggers a pop-up error dialog;
+        # the log file already has the details, so stay quiet there.
+        if not getattr(sys, "frozen", False):
+            sys.__excepthook__(exc_type, exc, tb)
 
     sys.excepthook = _excepthook
     _LOG.info("Songtify started")

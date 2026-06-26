@@ -896,10 +896,23 @@ class MainWindow(QWidget):
     def _on_app_update_downloaded(self, path: str) -> None:
         self.app_update_status.setText("Installing — Songtify will restart…")
         if appupdate.apply_update(path):
+            self._quiet_shutdown()
             QApplication.quit()
         else:
             self.app_update_status.setText("Could not install the update automatically.")
             self.app_update_btn.setEnabled(True)
+
+    def _quiet_shutdown(self) -> None:
+        """Tear things down cleanly so exit after an update doesn't error."""
+        for action in (
+            lambda: self.player_page.stop(),
+            lambda: self._media_keys.unregister() if self._media_keys else None,
+            lambda: self.queue.save(),
+        ):
+            try:
+                action()
+            except Exception:
+                pass
 
     def _startup_update_check(self) -> None:
         """Quiet check at launch; only surfaces if a newer version exists."""
