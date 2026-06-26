@@ -214,13 +214,6 @@ class LibraryWidget(QWidget):
         # before deleting it (so a currently-playing track can be deleted).
         self.release_file = None
 
-    def _release(self, path: str) -> None:
-        if self.release_file:
-            try:
-                self.release_file(path)
-            except Exception:
-                pass
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
@@ -264,6 +257,14 @@ class LibraryWidget(QWidget):
         self._vbox.addStretch(1)
         scroll.setWidget(self._container)
         layout.addWidget(scroll, 1)
+
+    def _release(self, path: str) -> None:
+        """Ask the player to release a file (if loaded) before it's deleted."""
+        if self.release_file:
+            try:
+                self.release_file(path)
+            except Exception:
+                pass
 
     def _sorted(self, files: list[dict]) -> list[dict]:
         mode = self.sort_combo.currentText()
