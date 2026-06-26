@@ -121,7 +121,7 @@ class DownloadWorker(QRunnable):
         elif d.get("status") == "finished":
             self.signals.status.emit(self.item.id, "Processing")
 
-    def _build_opts(self, outtmpl: str) -> dict:
+    def _build_opts(self, outtmpl: str, use_cookies: bool = True) -> dict:
         o = self.item.options
         opts: dict = {
             "outtmpl": outtmpl,
@@ -136,7 +136,7 @@ class DownloadWorker(QRunnable):
             opts["ffmpeg_location"] = ff
         if o.ratelimit_kbps and o.ratelimit_kbps > 0:
             opts["ratelimit"] = o.ratelimit_kbps * 1024
-        if o.cookies_browser:
+        if use_cookies and o.cookies_browser:
             # yt-dlp reads cookies directly from the browser's profile.
             opts["cookiesfrombrowser"] = (o.cookies_browser,)
 
@@ -150,13 +150,19 @@ class DownloadWorker(QRunnable):
             pps.append(extract)
         else:
             res = self.item.options.resolution
-            if res and res != "Best":
-                opts["format"] = (
-                    f"bestvideo[height<={res}][ext=mp4]+bestaudio[ext=m4a]/"
-                    f"bestvideo[height<={res}]+bestaudio/best[height<={res}]/best"
-                )
-            else:
-                opts["format"] = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best"
+            hf = f"[height<={res}]" if res and res != "Best" else ""
+            # Prefer H.264 (avc1) video + AAC (mp4a) audio: the codecs every
+            # editor/player supports. Avoids AV1 (av01) / VP9 / Opus, which apps
+            # like Premiere can't open. Falls back to mp4, then anything.
+            opts["format"] = (
+                f"bestvideo[vcodec^=avc1]{hf}+bestaudio[acodec^=mp4a]/"
+                f"bestvideo[vcodec^=avc1]{hf}+bestaudio/"
+                f"best[vcodec^=avc1]{hf}/"
+                f"bestvideo[ext=mp4]{hf}+bestaudio[ext=m4a]/"
+                f"best[ext=mp4]{hf}/best{hf}/best"
+            )
+            # Safety net: bias selection toward h264/aac if the string falls through.
+            opts["format_sort"] = ["vcodec:h264", "acodec:aac"]
             opts["merge_output_format"] = "mp4"
             if o.embed_subs:
                 opts["writesubtitles"] = True
@@ -258,6 +264,33 @@ class DownloadWorker(QRunnable):
                 except OSError:
                     pass
 
+    @staticmethod
+    def _is_cookie_error(exc: Exception) -> bool:
+        msg = str(exc).lower()
+        return "cookie" in msg or "could not copy" in msg or "unable to open" in msg
+
+    def _extract(self, outtmpl: str, archive, name: str, use_cookies: bool):
+        """Probe (for dedup) and download. Returns ('skip', path) or ('ok', info, final)."""
+        opts = self._build_opts(outtmpl, use_cookies=use_cookies)
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            probe = None
+            if archive is not None:
+                self.signals.status.emit(self.item.id, "Checking")
+                probe = self._unwrap(ydl.extract_info(self.item.url, download=False))
+                if self.item.cancel_event.is_set():
+                    raise _Cancelled()
+                if probe:
+                    existing = self._already_present(ydl, probe, archive)
+                    if existing:
+                        return ("skip", existing)
+
+            self.signals.status.emit(self.item.id, "Downloading")
+            info = self._download(ydl, probe)
+            if info is None:
+                raise RuntimeError("no media returned")
+            final = self._final_path(info, ydl)
+        return ("ok", info, final)
+
     # -- entry point -------------------------------------------------------
     def run(self) -> None:
         item = self.item
@@ -273,32 +306,28 @@ class DownloadWorker(QRunnable):
         archive = Archive(o.archive_path) if (o.use_archive and o.archive_path) else None
 
         try:
-            opts = self._build_opts(outtmpl)
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                # Duplicate check: probe metadata (no media bytes) and skip only
-                # if the produced file is actually still on disk. A track whose
-                # file was deleted from the folder downloads again.
-                probe = None
-                if archive is not None:
-                    self.signals.status.emit(item.id, "Checking")
-                    probe = self._unwrap(ydl.extract_info(item.url, download=False))
-                    if item.cancel_event.is_set():
-                        raise _Cancelled()
-                    if probe:
-                        existing = self._already_present(ydl, probe, archive)
-                        if existing:
-                            item.filepath = existing
-                            item.status = "Skipped"
-                            self.signals.status.emit(item.id, "Skipped")
-                            self.signals.finished.emit(item.id, existing)
-                            self.signals.log.emit(f"Already in folder, skipped: {name}")
-                            return
+            try:
+                result = self._extract(outtmpl, archive, name, use_cookies=True)
+            except _Cancelled:
+                raise
+            except Exception as exc:
+                # A bad cookie source must never block a download — retry clean.
+                if o.cookies_browser and self._is_cookie_error(exc):
+                    self.signals.log.emit(f"[{name}] cookies unavailable, retrying without them…")
+                    result = self._extract(outtmpl, archive, name, use_cookies=False)
+                else:
+                    raise
 
-                self.signals.status.emit(item.id, "Downloading")
-                info = self._download(ydl, probe)
-                if info is None:
-                    raise RuntimeError("no media returned")
-                final = self._final_path(info, ydl)
+            if result[0] == "skip":
+                existing = result[1]
+                item.filepath = existing
+                item.status = "Skipped"
+                self.signals.status.emit(item.id, "Skipped")
+                self.signals.finished.emit(item.id, existing)
+                self.signals.log.emit(f"Already in folder, skipped: {name}")
+                return
+
+            _, info, final = result
 
             if item.cancel_event.is_set():
                 raise _Cancelled()

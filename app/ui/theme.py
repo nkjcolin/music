@@ -119,12 +119,17 @@ QFrame#chip {{
     border-radius: 10px;
 }}
 QLabel#chipLabel {{ color: {TEXT_DIM}; font-weight: 600; }}
+/* Combos inside chips read as obvious, clickable dropdowns. */
 QFrame#chip QComboBox {{
-    background: transparent;
-    border: none;
-    padding: 4px 4px;
+    background: {CARD};
+    border: 1px solid {BORDER};
+    border-radius: 7px;
+    padding: 5px 10px;
 }}
-QFrame#chip QComboBox:focus {{ border: none; }}
+QFrame#chip QComboBox:hover {{ border: 1px solid {ACCENT}; }}
+QFrame#chip QComboBox:focus {{ border: 1px solid {ACCENT}; }}
+QFrame#chip QComboBox::drop-down {{ border: none; width: 22px; }}
+QFrame#chip QComboBox::down-arrow {{ width: 10px; height: 10px; }}
 
 /* Cards / queue rows */
 QFrame#card {{

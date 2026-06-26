@@ -241,9 +241,9 @@ class MainWindow(QWidget):
 
         # Preset
         self.preset_combo = QComboBox()
-        self.preset_combo.setMinimumContentsLength(14)
         for label, _ in self._PRESETS:
             self.preset_combo.addItem(label)
+        self._size_combo(self.preset_combo)
         self.preset_combo.currentIndexChanged.connect(self._apply_preset)
         self._fmt_flow.addWidget(self._chip("Preset", self.preset_combo))
 
@@ -261,7 +261,8 @@ class MainWindow(QWidget):
         seg_inner.setSpacing(6)
         for b in (self.audio_btn, self.video_btn):
             b.setCheckable(True)
-            b.setMinimumWidth(96)
+            # Wide enough that the bold "checked" label never gets clipped.
+            b.setMinimumWidth(118)
             self.seg_group.addButton(b)
             seg_inner.addWidget(b)
         self.audio_btn.toggled.connect(self._on_format_toggled)
@@ -271,17 +272,20 @@ class MainWindow(QWidget):
         # they can be shown/hidden and wrapped independently.
         self.bitrate_combo = QComboBox()
         self.bitrate_combo.addItems(BITRATES)
+        self._size_combo(self.bitrate_combo)
         self.bitrate_chip = self._chip("Bitrate", self.bitrate_combo)
         self._fmt_flow.addWidget(self.bitrate_chip)
 
         self.codec_combo = QComboBox()
         for codec in CODECS:
             self.codec_combo.addItem(codec.upper(), codec)
+        self._size_combo(self.codec_combo)
         self.codec_chip = self._chip("Codec", self.codec_combo)
         self._fmt_flow.addWidget(self.codec_chip)
 
         self.resolution_combo = QComboBox()
         self.resolution_combo.addItems(RESOLUTIONS)
+        self._size_combo(self.resolution_combo)
         self.resolution_chip = self._chip("Resolution", self.resolution_combo)
         self.resolution_chip.setVisible(False)
         self._fmt_flow.addWidget(self.resolution_chip)
@@ -399,6 +403,12 @@ class MainWindow(QWidget):
         self._fmt_flow.invalidate()   # reflow now that visible chips changed
         # Reflect the destination for the chosen format.
         self.folder_input.setText(self.settings.folder_for("audio" if audio_on else "video"))
+
+    def _size_combo(self, combo: QComboBox) -> None:
+        """Grow the combo to fit its current text so nothing is clipped."""
+        combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContentsOnFirstShow)
+        combo.setMinimumContentsLength(max(8, max((len(combo.itemText(i))
+                                  for i in range(combo.count())), default=8)))
 
     def _chip(self, label: str, control: QWidget) -> QFrame:
         """A rounded 'chip' grouping a dim label with its control."""
