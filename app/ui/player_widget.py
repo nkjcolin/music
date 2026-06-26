@@ -298,6 +298,24 @@ class PlayerWidget(QWidget):
         if self.available:
             self.player.stop()
 
+    def release_file(self, path: str) -> None:
+        """Release ``path`` if it's the loaded track, so it can be deleted.
+
+        Windows locks the file the player has open; clearing the source frees
+        the handle. No-op if a different track (or nothing) is playing.
+        """
+        if not self.available or not self._current_path:
+            return
+        if os.path.normcase(self._current_path) != os.path.normcase(path):
+            return
+        self.player.stop()
+        self.player.setSource(QUrl())   # closes the open file handle
+        self._current_path = ""
+        self.title_label.setText("Nothing playing")
+        self.artist_label.setText("")
+        self._set_placeholder_cover()
+        self._reset_lyrics("Pick a song to see lyrics here.")
+
     # -- queue order -------------------------------------------------------
     def _index_of(self, path: str) -> int | None:
         if not path:

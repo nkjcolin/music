@@ -153,6 +153,8 @@ class MainWindow(QWidget):
         outer.addWidget(self._build_mini_bar())
 
         self.library_page.play_requested.connect(self._play_in_app)
+        # Let the Library release a track from the player before deleting it.
+        self.library_page.release_file = self.player_page.release_file
         self.history_page.redownload_requested.connect(self._redownload)
         self._wire_player_bar()
         self._wire_queue()

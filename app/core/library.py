@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 from . import lrc as lrc_mod
 from .naming import sanitize_filename
@@ -73,12 +74,28 @@ def rename_media(old_path: str, new_stem: str) -> str:
     return new_path
 
 
+def _remove_with_retry(path: str, attempts: int = 6, delay: float = 0.15) -> None:
+    """Delete a file, retrying briefly if it's momentarily locked.
+
+    The player releases a file before deletion, but Windows can hold the handle
+    for a fraction of a second after the source is cleared.
+    """
+    for attempt in range(attempts):
+        try:
+            os.remove(path)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+
+
 def delete_media(path: str) -> None:
     """Delete a media file and its lyric sidecar. Raises ``OSError`` on failure."""
-    os.remove(path)
+    _remove_with_retry(path)
     lrc = lrc_mod.lrc_path_for(path)
     if lrc and os.path.exists(lrc):
         try:
-            os.remove(lrc)
+            _remove_with_retry(lrc)
         except OSError:
             pass

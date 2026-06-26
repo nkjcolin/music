@@ -72,10 +72,11 @@ class LibraryRow(QFrame):
     play_requested = Signal(str)   # file path
     deleted = Signal(str)          # file path
 
-    def __init__(self, info: dict, tags: dict, duration) -> None:
+    def __init__(self, info: dict, tags: dict, duration, release_cb=None) -> None:
         super().__init__()
         self.setObjectName("queueRow")
         self.info = info
+        self._release_cb = release_cb   # called with the path before deletion
         self.haystack = " ".join([
             info["stem"], tags.get("artist", ""), tags.get("album", ""),
         ]).lower()
@@ -179,6 +180,8 @@ class LibraryRow(QFrame):
             f"Delete “{name}” from disk?\nThis also removes its lyrics file.",
         ) != QMessageBox.Yes:
             return
+        if self._release_cb:               # let the player release it if playing
+            self._release_cb(self.info["path"])
         try:
             library_mod.delete_media(self.info["path"])
         except OSError as exc:
@@ -207,6 +210,16 @@ class LibraryWidget(QWidget):
         super().__init__()
         self.settings = settings
         self._rows: list[LibraryRow] = []
+        # Set by MainWindow: callable(path) to release a file from the player
+        # before deleting it (so a currently-playing track can be deleted).
+        self.release_file = None
+
+    def _release(self, path: str) -> None:
+        if self.release_file:
+            try:
+                self.release_file(path)
+            except Exception:
+                pass
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -276,7 +289,7 @@ class LibraryWidget(QWidget):
             is_audio = info["ext"].lower() in _AUDIO_EXTS
             tags = metadata_mod.read_tags(info["path"]) if is_audio else {}
             duration = metadata_mod.read_duration(info["path"]) if is_audio else None
-            row = LibraryRow(info, tags, duration)
+            row = LibraryRow(info, tags, duration, release_cb=self._release)
             row.play_requested.connect(self.play_requested)
             row.deleted.connect(self._on_row_deleted)
             self._rows.append(row)
@@ -308,6 +321,7 @@ class LibraryWidget(QWidget):
             return
         errors = 0
         for row in selected:
+            self._release(row.info["path"])   # free it from the player if playing
             try:
                 library_mod.delete_media(row.info["path"])
                 self._on_row_deleted(row.info["path"])
