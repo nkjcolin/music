@@ -16,6 +16,7 @@ dist/
 
 # Bundled binaries (too large for GitHub; download separately)
 ffmpeg.exe
+ffprobe.exe
 
 # OS / editor
 .DS_Store

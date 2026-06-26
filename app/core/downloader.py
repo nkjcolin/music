@@ -14,7 +14,7 @@ from . import lyrics as lyrics_mod
 from . import metadata as metadata_mod
 from .archive import Archive, archive_key
 from .naming import build_outtmpl
-from .paths import ffmpeg_path
+from .paths import ffmpeg_dir, ffmpeg_path
 from .settings import CODEC_EXT
 
 # SponsorBlock categories removed when the user enables it (YouTube only).
@@ -121,7 +121,7 @@ class DownloadWorker(QRunnable):
         elif d.get("status") == "finished":
             self.signals.status.emit(self.item.id, "Processing")
 
-    def _build_opts(self, outtmpl: str, use_cookies: bool = True, use_subs: bool = True) -> dict:
+    def _build_opts(self, outtmpl: str, use_cookies: bool = True, subs_mode: str = "all") -> dict:
         o = self.item.options
         opts: dict = {
             "outtmpl": outtmpl,
@@ -131,7 +131,9 @@ class DownloadWorker(QRunnable):
             "no_warnings": True,
             "ignoreerrors": False,
         }
-        ff = ffmpeg_path()
+        # Point at the directory so yt-dlp finds BOTH ffmpeg and ffprobe
+        # (ffprobe is required for subtitle/chapter post-processing).
+        ff = ffmpeg_dir() or ffmpeg_path()
         if ff:
             opts["ffmpeg_location"] = ff
         if o.ratelimit_kbps and o.ratelimit_kbps > 0:
@@ -164,12 +166,13 @@ class DownloadWorker(QRunnable):
             # Safety net: bias selection toward h264/aac if the string falls through.
             opts["format_sort"] = ["vcodec:h264", "acodec:aac"]
             opts["merge_output_format"] = "mp4"
-            if use_subs and o.embed_subs:
+            if o.embed_subs and subs_mode != "none":
+                # Grab every available subtitle / closed-caption track.
                 opts["writesubtitles"] = True
-                opts["writeautomaticsub"] = True
-                # Specific English variants only — a broad "en.*" pulls many
-                # auto-translated tracks (en-nl, …) and trips HTTP 429.
-                opts["subtitleslangs"] = ["en", "en-US", "en-GB", "en-orig"]
+                opts["subtitleslangs"] = ["all"]
+                # Auto-generated (and auto-translated) captions are what trip
+                # HTTP 429 — include them in "all" mode, drop them in "manual".
+                opts["writeautomaticsub"] = subs_mode == "all"
                 pps.append({"key": "FFmpegEmbedSubtitle"})
             if o.embed_chapters:
                 pps.append({"key": "FFmpegMetadata", "add_chapters": True})
@@ -273,11 +276,13 @@ class DownloadWorker(QRunnable):
 
     @staticmethod
     def _is_subtitle_error(exc: Exception) -> bool:
-        return "subtitle" in str(exc).lower()
+        msg = str(exc).lower()
+        # Subtitle download (429) or its ffprobe-based post-processing.
+        return "subtitle" in msg or "ffprobe" in msg or "video duration" in msg
 
-    def _extract(self, outtmpl: str, archive, name: str, use_cookies: bool, use_subs: bool):
+    def _extract(self, outtmpl: str, archive, name: str, use_cookies: bool, subs_mode: str):
         """Probe (for dedup) and download. Returns ('skip', path) or ('ok', info, final)."""
-        opts = self._build_opts(outtmpl, use_cookies=use_cookies, use_subs=use_subs)
+        opts = self._build_opts(outtmpl, use_cookies=use_cookies, subs_mode=subs_mode)
         with yt_dlp.YoutubeDL(opts) as ydl:
             probe = None
             if archive is not None:
@@ -316,10 +321,11 @@ class DownloadWorker(QRunnable):
             # source or a rate-limited (HTTP 429) subtitle fetch must never block
             # the actual media — drop that feature and retry.
             use_cookies = True
-            use_subs = bool(o.embed_subs)
+            # Subtitles degrade: all (manual + auto) -> manual only -> none.
+            subs_mode = "all" if o.embed_subs else "none"
             while True:
                 try:
-                    result = self._extract(outtmpl, archive, name, use_cookies, use_subs)
+                    result = self._extract(outtmpl, archive, name, use_cookies, subs_mode)
                     break
                 except _Cancelled:
                     raise
@@ -328,10 +334,15 @@ class DownloadWorker(QRunnable):
                         use_cookies = False
                         self.signals.log.emit(f"[{name}] cookies unavailable, retrying without them…")
                         continue
-                    if use_subs and self._is_subtitle_error(exc):
-                        use_subs = False
-                        self.signals.log.emit(
-                            f"[{name}] subtitles unavailable (rate-limited), retrying without them…")
+                    if subs_mode != "none" and self._is_subtitle_error(exc):
+                        if subs_mode == "all":
+                            subs_mode = "manual"
+                            self.signals.log.emit(
+                                f"[{name}] auto captions rate-limited, retrying with manual subtitles only…")
+                        else:
+                            subs_mode = "none"
+                            self.signals.log.emit(
+                                f"[{name}] subtitles unavailable, retrying without them…")
                         continue
                     raise
 

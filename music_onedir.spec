@@ -17,6 +17,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ('ffmpeg.exe', '.'),
+        ('ffprobe.exe', '.'),
         ('assets/youtube_music.ico', '.'),
     ],
     hiddenimports=hiddenimports,

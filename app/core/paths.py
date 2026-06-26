@@ -23,6 +23,22 @@ def ffmpeg_path() -> str | None:
     return candidate if os.path.exists(candidate) else None
 
 
+def ffprobe_path() -> str | None:
+    """Return the path to the bundled ffprobe binary, or ``None`` to use PATH."""
+    candidate = resource_path("ffprobe.exe")
+    return candidate if os.path.exists(candidate) else None
+
+
+def ffmpeg_dir() -> str | None:
+    """Directory holding ffmpeg/ffprobe — what yt-dlp's ``ffmpeg_location`` wants.
+
+    Passing the directory lets yt-dlp find **both** ffmpeg and ffprobe (the
+    latter is needed for subtitle/chapter post-processing).
+    """
+    ff = ffmpeg_path()
+    return os.path.dirname(ff) if ff else None
+
+
 def icon_path() -> str:
     """Return the path to the application icon, checking bundle and assets dir."""
     for name in ("youtube_music.ico", os.path.join("assets", "youtube_music.ico")):
