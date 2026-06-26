@@ -45,6 +45,23 @@ def test_apply_update_noop_when_not_frozen(monkeypatch):
     assert appupdate.apply_update("anything") is False
 
 
+def test_relaunch_env_strips_bundle_vars(monkeypatch):
+    import os
+    fake = {
+        "QT_QPA_PLATFORM_PLUGIN_PATH": r"C:\Temp\_MEI123\PySide6\plugins\platforms",
+        "QT_PLUGIN_PATH": r"C:\Temp\_MEI123\PySide6\plugins",
+        "PATH": r"C:\Temp\_MEI123;C:\Windows;C:\Windows\System32",
+        "HOME": r"C:\Users\x",
+    }
+    monkeypatch.setattr(os, "environ", fake)
+    env = appupdate._relaunch_env()
+    assert "QT_QPA_PLATFORM_PLUGIN_PATH" not in env
+    assert "QT_PLUGIN_PATH" not in env
+    assert "_MEI123" not in env["PATH"]                 # stale temp dir dropped
+    assert r"C:\Windows" in env["PATH"]                 # real entries kept
+    assert env["HOME"] == r"C:\Users\x"                 # unrelated vars kept
+
+
 def test_download_rejects_non_executable(tmp_path, monkeypatch):
     import requests
 

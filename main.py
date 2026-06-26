@@ -18,11 +18,12 @@ from app.ui.theme import STYLESHEET
 
 
 def main() -> int:
-    setup_logging()
-    appupdate.cleanup_old()   # remove the previous exe after a self-update
     app = QApplication(sys.argv)
     app.setOrganizationName(ORG)
     app.setApplicationName(APP)
+    # After org/app names are set so logs land in the proper app-data folder.
+    setup_logging()
+    appupdate.cleanup_old()   # remove the previous exe after a self-update
     app.setWindowIcon(QIcon(icon_path()))
     app.setStyleSheet(STYLESHEET)
 

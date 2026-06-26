@@ -103,6 +103,22 @@ def download(url: str, progress=None) -> str:
 
 _DETACHED_PROCESS = 0x00000008
 
+# Environment variables the (onefile) PyInstaller runtime injects, pointing into
+# this process's temp ``_MEI…`` folder. The relaunched build must NOT inherit
+# them or it looks for Qt plugins/DLLs in the old, vanishing folder and dies with
+# "no Qt platform plugin could be initialized".
+_STRIP_ENV = {
+    "QT_QPA_PLATFORM_PLUGIN_PATH", "QT_PLUGIN_PATH", "QT_QPA_PLATFORM",
+    "QML2_IMPORT_PATH", "QML_IMPORT_PATH",
+}
+
+
+def _relaunch_env() -> dict:
+    env = {k: v for k, v in os.environ.items() if k.upper() not in _STRIP_ENV}
+    parts = env.get("PATH", "").split(os.pathsep)
+    env["PATH"] = os.pathsep.join(p for p in parts if "_MEI" not in p)
+    return env
+
 
 def apply_update(new_exe_path: str) -> bool:
     """Swap in the downloaded exe and relaunch — no shell, no console windows.
@@ -137,7 +153,13 @@ def apply_update(new_exe_path: str) -> bool:
         return False
 
     try:
-        subprocess.Popen([current], creationflags=_DETACHED_PROCESS, close_fds=True)
+        subprocess.Popen(
+            [current],
+            env=_relaunch_env(),
+            cwd=os.path.dirname(current) or None,
+            creationflags=_DETACHED_PROCESS,
+            close_fds=True,
+        )
     except Exception:
         pass  # already swapped; the user can relaunch manually if needed
     return True

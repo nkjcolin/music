@@ -39,4 +39,10 @@ def setup_logging() -> None:
             sys.__excepthook__(exc_type, exc, tb)
 
     sys.excepthook = _excepthook
-    _LOG.info("Songtify started")
+    import os
+    mei_in_path = any("_MEI" in p for p in os.environ.get("PATH", "").split(os.pathsep))
+    _LOG.info(
+        "Songtify started (frozen=%s, _MEI in PATH=%s, QT_QPA_PLATFORM_PLUGIN_PATH set=%s)",
+        getattr(sys, "frozen", False), mei_in_path,
+        bool(os.environ.get("QT_QPA_PLATFORM_PLUGIN_PATH")),
+    )
